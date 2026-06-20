@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLabel, QLineEdit, QPushButton, QComboBox, QTableWidget, QTableWidgetItem, 
+    QLabel, QLineEdit, QPushButton, QComboBox, QListView, QTableWidget, QTableWidgetItem, 
     QHeaderView, QMessageBox, QFrame, QStackedWidget, QTabWidget, QButtonGroup,
-    QGraphicsDropShadowEffect
+    QGraphicsDropShadowEffect, QScrollArea
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QFont, QColor
@@ -28,12 +28,14 @@ try:
     from data.umbrella import UmbrellasTab
     from data.penalty import PenaltiesTab
     from data.payment import PaymentsTab
+    from data.success_dialogs import RentSuccessDialog, ReturnSuccessDialog, ReturnPenaltySuccessDialog
 except ImportError:
     # Fallback to local import if run differently
     from user import UsersTab
     from umbrella import UmbrellasTab
     from penalty import PenaltiesTab
     from payment import PaymentsTab
+    from success_dialogs import RentSuccessDialog, ReturnSuccessDialog, ReturnPenaltySuccessDialog
 
 DB_FILE = os.path.join(os.getcwd(), "Raincheck.db")
 
@@ -321,26 +323,41 @@ class DashboardPage(QWidget):
     def __init__(self, main_win, parent=None):
         super().__init__(parent)
         self.main_win = main_win
+        self.current_page = 0
+        self.total_pages = 1
         self.init_ui()
         
     def init_ui(self):
         self.setStyleSheet("background-color: #f3f4f6;")
         
-        # Outer layout to center the entire dashboard page content horizontally and vertically
-        outer_layout = QHBoxLayout(self)
+        # 1. Main outer layout that holds the Scroll Area
+        self_layout = QVBoxLayout(self)
+        self_layout.setContentsMargins(0, 0, 0, 0)
+        self_layout.setSpacing(0)
+        
+        # Scroll Area for the whole dashboard page
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background-color: #f3f4f6; }")
+        
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background-color: #f3f4f6;")
+        scroll.setWidget(scroll_content)
+        self_layout.addWidget(scroll)
+        
+        # Outer layout inside scroll_content to center horizontally
+        outer_layout = QHBoxLayout(scroll_content)
         outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
         outer_layout.addStretch(1)
         
-        # Main container with a comfortable visual width
+        # Main container with a comfortable visual width (1010px matches the design beautifully)
         container = QWidget()
-        container.setFixedWidth(1020)
+        container.setFixedWidth(1010)
         container.setStyleSheet("background: transparent;")
         container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(20, 30, 20, 30)
+        container_layout.setContentsMargins(10, 15, 10, 25)
         container_layout.setSpacing(15)
-        
-        # Add spacing before content to center vertically
-        container_layout.addStretch(1)
         
         # Section 1: QUICK STATS
         stats_section_lbl = QLabel("QUICK STATS")
@@ -362,7 +379,7 @@ class DashboardPage(QWidget):
         container_layout.addLayout(cards_layout)
         
         # Spacer
-        container_layout.addSpacing(15)
+        container_layout.addSpacing(10)
         
         # Section 2: ACTIONS
         actions_section_lbl = QLabel("ACTIONS")
@@ -386,11 +403,501 @@ class DashboardPage(QWidget):
         
         container_layout.addLayout(actions_layout)
         
-        # Add spacing after content to center vertically
-        container_layout.addStretch(1)
+        # Spacer
+        container_layout.addSpacing(15)
+        
+        # Section 3: ACTIVE AND OVERDUE RENTALS (Clean table white card layout)
+        table_card = QFrame()
+        table_card.setObjectName("TableCard")
+        table_card.setStyleSheet("""
+            QFrame#TableCard {
+                background-color: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+            }
+        """)
+        add_subtle_shadow(table_card)
+        
+        table_card_layout = QVBoxLayout(table_card)
+        table_card_layout.setContentsMargins(20, 20, 20, 20)
+        table_card_layout.setSpacing(15)
+        
+        # Table Header Row (Title on left, filter dropdown on right)
+        table_header_layout = QHBoxLayout()
+        
+        table_title = QLabel("ACTIVE AND OVERDUE RENTALS")
+        table_title.setStyleSheet("color: #11224d; font-size: 13px; font-weight: bold; letter-spacing: 0.8px; font-family: 'Segoe UI', Arial, sans-serif;")
+        table_header_layout.addWidget(table_title)
+        
+        table_header_layout.addStretch()
+        
+        self.filter_cmb = QComboBox()
+        self.filter_cmb.setView(QListView())
+        self.filter_cmb.addItems(["Filter by: All", "Filter by: Active", "Filter by: Overdue"])
+        self.filter_cmb.setStyleSheet("""
+            QComboBox {
+                background-color: #ffffff;
+                color: #374151;
+                border: 1px solid #d1d5db;
+                border-radius: 12px;
+                padding: 4px 12px;
+                font-size: 11px;
+                font-weight: bold;
+                min-width: 140px;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+            QComboBox:hover {
+                border-color: #afb1b6;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #ffffff;
+                color: #374151;
+                selection-background-color: #f3f4f6;
+                selection-color: #111827;
+                border: 1px solid #d1d5db;
+                border-radius: 8px;
+            }
+        """)
+        self.filter_cmb.currentIndexChanged.connect(self.on_filter_changed)
+        table_header_layout.addWidget(self.filter_cmb)
+        
+        table_card_layout.addLayout(table_header_layout)
+        
+        # Create Table Widget
+        self.table = QTableWidget()
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels([
+            "RENTAL ID", "USER", "UMBRELLA", "BORROWED ON", "DUE BY", "STATUS"
+        ])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.table.setShowGrid(False)
+        self.table.setFrameShape(QTableWidget.Shape.NoFrame)
+        self.table.setMinimumHeight(280)
+        self.table.setFixedHeight(280)
+        
+        # Stylesheet for custom table matching design specification
+        self.table.setStyleSheet("""
+            QTableWidget {
+                background-color: #ffffff;
+                gridline-color: transparent;
+                border: none;
+            }
+            QHeaderView::section {
+                background-color: #eff6ff;
+                color: #4b5563;
+                font-size: 10px;
+                font-weight: bold;
+                letter-spacing: 0.5px;
+                padding: 10px 15px;
+                border: none;
+                border-bottom: 2px solid #bfdbfe;
+            }
+            QTableWidget::item {
+                border-bottom: 1px solid #f3f4f6;
+            }
+        """)
+        
+        # Column alignments and resizing
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
+        
+        self.table.setColumnWidth(0, 130)
+        self.table.setColumnWidth(2, 110)
+        self.table.setColumnWidth(3, 150)
+        self.table.setColumnWidth(4, 150)
+        self.table.setColumnWidth(5, 110)
+        
+        table_card_layout.addWidget(self.table)
+        
+        # Table Footer (Pagination & Items display)
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(10, 5, 10, 5)
+        
+        self.footer_info = QLabel("Showing 1 to 5 of 17 rentals")
+        self.footer_info.setStyleSheet("color: #6b7280; font-size: 11px; font-weight: bold; font-family: 'Segoe UI', Arial, sans-serif;")
+        footer_layout.addWidget(self.footer_info)
+        
+        footer_layout.addStretch()
+        
+        # Sub-container layout for button widgets
+        self.pages_widget = QWidget()
+        self.pages_layout = QHBoxLayout(self.pages_widget)
+        self.pages_layout.setContentsMargins(0, 0, 0, 0)
+        self.pages_layout.setSpacing(6)
+        
+        footer_layout.addWidget(self.pages_widget)
+        
+        table_card_layout.addLayout(footer_layout)
+        
+        container_layout.addWidget(table_card)
         
         outer_layout.addWidget(container)
         outer_layout.addStretch(1)
+        
+        # Load initial data
+        self.load_table_data()
+
+    def on_filter_changed(self, idx):
+        self.current_page = 0
+        self.load_table_data()
+
+    def set_page(self, page_nb):
+        self.current_page = page_nb
+        self.load_table_data()
+
+    def create_text_cell(self, text, is_bold=False):
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(15, 0, 10, 0)
+        layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        
+        lbl = QLabel(text)
+        style = "color: #1e40af; font-size: 11px; font-family: 'Segoe UI', sans-serif;"
+        if is_bold:
+            style += " font-weight: bold;"
+        lbl.setStyleSheet(f"QLabel {{ {style} }}")
+        layout.addWidget(lbl)
+        return container
+
+    def create_user_cell(self, name, user_id):
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(15, 4, 10, 4)
+        layout.setSpacing(2)
+        
+        name_lbl = QLabel(name)
+        name_lbl.setStyleSheet("""
+            QLabel {
+                color: #111827;
+                font-weight: bold;
+                font-size: 12px;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                background: transparent;
+            }
+        """)
+        
+        id_lbl = QLabel(user_id)
+        id_lbl.setStyleSheet("""
+            QLabel {
+                color: #6b7280;
+                font-size: 10px;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                background: transparent;
+            }
+        """)
+        
+        layout.addWidget(name_lbl)
+        layout.addWidget(id_lbl)
+        return container
+
+    def create_umbrella_pill(self, text):
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 5, 0, 5)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        pill = QLabel(text)
+        pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pill.setFixedSize(65, 22)
+        pill.setStyleSheet("""
+            QLabel {
+                background-color: #eff6ff;
+                color: #1e40af;
+                border: 1px solid #bfdbfe;
+                border-radius: 11px;
+                font-size: 11px;
+                font-weight: bold;
+                font-family: 'Segoe UI', Arial, sans-serif;
+            }
+        """)
+        layout.addWidget(pill)
+        return container
+
+    def format_display_date(self, date_str):
+        try:
+            parts = date_str.split(" ")
+            dt_parts = list(map(int, parts[0].split("-")))
+            tm_str = parts[1]
+            ampm = parts[2]
+            
+            from datetime import date
+            d = date(dt_parts[0], dt_parts[1], dt_parts[2])
+            month_name = d.strftime("%b")
+            date_line = f"{month_name} {dt_parts[2]:02d}, {dt_parts[0]}"
+            time_line = f"{tm_str} {ampm}"
+            return date_line, time_line
+        except Exception:
+            return date_str, ""
+
+    def create_datetime_cell(self, date_line, time_line):
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(10, 4, 10, 4)
+        layout.setSpacing(2)
+        
+        date_lbl = QLabel(date_line)
+        date_lbl.setStyleSheet("""
+            QLabel {
+                color: #374151;
+                font-size: 11px;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                background: transparent;
+            }
+        """)
+        
+        time_lbl = QLabel(time_line)
+        time_lbl.setStyleSheet("""
+            QLabel {
+                color: #6b7280;
+                font-size: 10px;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                background: transparent;
+            }
+        """)
+        
+        layout.addWidget(date_lbl)
+        layout.addWidget(time_lbl)
+        return container
+
+    def create_pill_widget(self, text, is_active):
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 5, 0, 5)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        pill = QLabel(text)
+        pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pill.setFixedSize(70, 22)
+        
+        if is_active:
+            style = """
+                QLabel {
+                    background-color: #ecfdf5;
+                    color: #059669;
+                    border: 1px solid #a7f3d0;
+                    border-radius: 11px;
+                    font-size: 11px;
+                    font-weight: bold;
+                    font-family: 'Segoe UI', Arial, sans-serif;
+                }
+            """
+        else:
+            style = """
+                QLabel {
+                    background-color: #fef2f2;
+                    color: #dc2626;
+                    border: 1px solid #fecaca;
+                    border-radius: 11px;
+                    font-size: 11px;
+                    font-weight: bold;
+                    font-family: 'Segoe UI', Arial, sans-serif;
+                }
+            """
+        pill.setStyleSheet(style)
+        layout.addWidget(pill)
+        return container
+
+    def get_pagination_button_style(self, enabled, active):
+        if not enabled:
+            return """
+                QPushButton {
+                    background-color: transparent;
+                    color: #d1d5db;
+                    border: 1px solid #e5e7eb;
+                    border-radius: 13px;
+                    font-size: 11px;
+                }
+            """
+        if active:
+            return """
+                QPushButton {
+                    background-color: #11224d;
+                    color: #ffffff;
+                    border: 1px solid #11224d;
+                    border-radius: 13px;
+                    font-size: 11px;
+                    font-weight: bold;
+                }
+            """
+        return """
+            QPushButton {
+                background-color: #ffffff;
+                color: #4b5563;
+                border: 1px solid #d1d5db;
+                border-radius: 13px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #f3f4f6;
+                border-color: #afb1b6;
+            }
+        """
+
+    def rebuild_pagination_buttons(self, total_items):
+        import math
+        self.total_pages = max(1, math.ceil(total_items / 5))
+        if self.current_page >= self.total_pages:
+            self.current_page = self.total_pages - 1
+            
+        while self.pages_layout.count():
+            child = self.pages_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+                
+        # Left arrow
+        prev_btn = QPushButton("‹")
+        prev_btn.setFixedSize(26, 26)
+        prev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        prev_btn.setEnabled(self.current_page > 0)
+        prev_btn.setStyleSheet(self.get_pagination_button_style(self.current_page > 0, False))
+        prev_btn.clicked.connect(lambda: self.set_page(self.current_page - 1))
+        self.pages_layout.addWidget(prev_btn)
+        
+        # Numbers
+        for i in range(self.total_pages):
+            page_btn = QPushButton(str(i + 1))
+            page_btn.setFixedSize(26, 26)
+            page_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            is_active = (i == self.current_page)
+            page_btn.setStyleSheet(self.get_pagination_button_style(True, is_active))
+            page_btn.clicked.connect(lambda checked, p=i: self.set_page(p))
+            self.pages_layout.addWidget(page_btn)
+            
+        # Right arrow
+        next_btn = QPushButton("›")
+        next_btn.setFixedSize(26, 26)
+        next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        next_btn.setEnabled(self.current_page < self.total_pages - 1)
+        next_btn.setStyleSheet(self.get_pagination_button_style(self.current_page < self.total_pages - 1, False))
+        next_btn.clicked.connect(lambda: self.set_page(self.current_page + 1))
+        self.pages_layout.addWidget(next_btn)
+
+    def load_table_data(self):
+        import sqlite3
+        from datetime import datetime
+        
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT 
+                    r.rent_id,
+                    u.first_name,
+                    u.last_name,
+                    u.m_i,
+                    u.user_id,
+                    r.umbrella_id,
+                    r.rent_date,
+                    r.due_date
+                FROM rents r
+                JOIN USER u ON r.user_id = u.user_id
+                LEFT JOIN returns ret ON r.rent_id = ret.rent_id
+                WHERE ret.return_id IS NULL
+                ORDER BY r.due_date ASC
+            """)
+            raw_data = cursor.fetchall()
+            conn.close()
+        except Exception as e:
+            print(f"Error loading dashboard table: {e}")
+            raw_data = []
+
+        processed_data = []
+        for row in raw_data:
+            rent_id, first, last, mi, user_id, umb_id, rent_date, due_date = row
+            full_name = f"{first} {last}"
+            if mi:
+                full_name = f"{first} {mi} {last}"
+                
+            is_over = False
+            try:
+                now = datetime.now()
+                parts = due_date.split(" ")
+                dt_parts = parts[0].split("-")
+                tm_parts = parts[1].split(":")
+                ampm = parts[2]
+                
+                hr = int(tm_parts[0])
+                if ampm == "PM" and hr < 12:
+                    hr += 12
+                if ampm == "AM" and hr == 12:
+                    hr = 0
+                    
+                due_dt = datetime(
+                    int(dt_parts[0]),
+                    int(dt_parts[1]),
+                    int(dt_parts[2]),
+                    hr,
+                    int(tm_parts[1])
+                )
+                is_over = now > due_dt
+            except Exception:
+                pass
+                
+            processed_data.append({
+                "rent_id": rent_id,
+                "user_name": full_name,
+                "user_id": user_id,
+                "umbrella_id": umb_id,
+                "rent_date": rent_date,
+                "due_date": due_date,
+                "is_overdue": is_over
+            })
+
+        filter_text = self.filter_cmb.currentText()
+        filtered_data = []
+        for item in processed_data:
+            if "Active" in filter_text:
+                if not item["is_overdue"]:
+                    filtered_data.append(item)
+            elif "Overdue" in filter_text:
+                if item["is_overdue"]:
+                    filtered_data.append(item)
+            else:
+                filtered_data.append(item)
+
+        total_items = len(filtered_data)
+        
+        import math
+        self.total_pages = max(1, math.ceil(total_items / 5))
+        if self.current_page >= self.total_pages:
+            self.current_page = self.total_pages - 1
+            
+        start_idx = self.current_page * 5
+        end_idx = min(start_idx + 5, total_items)
+        
+        page_items = filtered_data[start_idx:end_idx]
+        
+        self.table.setRowCount(len(page_items))
+        
+        for idx, item in enumerate(page_items):
+            self.table.setCellWidget(idx, 0, self.create_text_cell(item["rent_id"], is_bold=True))
+            self.table.setCellWidget(idx, 1, self.create_user_cell(item["user_name"], item["user_id"]))
+            self.table.setCellWidget(idx, 2, self.create_umbrella_pill(item["umbrella_id"]))
+            
+            b_date_line, b_time_line = self.format_display_date(item["rent_date"])
+            self.table.setCellWidget(idx, 3, self.create_datetime_cell(b_date_line, b_time_line))
+            
+            d_date_line, d_time_line = self.format_display_date(item["due_date"])
+            self.table.setCellWidget(idx, 4, self.create_datetime_cell(d_date_line, d_time_line))
+            
+            status_text = "Overdue" if item["is_overdue"] else "Active"
+            self.table.setCellWidget(idx, 5, self.create_pill_widget(status_text, not item["is_overdue"]))
+            
+            self.table.setRowHeight(idx, 48)
+
+        if total_items > 0:
+            self.footer_info.setText(f"Showing {start_idx + 1} to {end_idx} of {total_items} rentals")
+        else:
+            self.footer_info.setText("Showing 0 to 0 of 0 rentals")
+            
+        self.rebuild_pagination_buttons(total_items)
 
 
 class ClickableOptionCard(QFrame):
@@ -590,6 +1097,7 @@ class RentPage(QWidget):
         selection_form_layout.setSpacing(10)
         
         self.umb_cmb = QComboBox()
+        self.umb_cmb.setView(QListView())
         self.umb_cmb.setStyleSheet("""
             QComboBox {
                 background-color: #ffffff;
@@ -868,7 +1376,8 @@ class RentPage(QWidget):
             conn.commit()
             conn.close()
             
-            QMessageBox.information(self, "Equipment Checked Out", f"Equipment successfully leased!\nID: {custom_rent_id}\nDue on: {due_date_str}")
+            dlg = RentSuccessDialog(custom_rent_id, due_date_str, self)
+            dlg.exec()
             
             self.refresh()
             self.main_win.refresh_stats()
@@ -1201,23 +1710,33 @@ class ReturnPage(QWidget):
             fines = []
             
             # Damage checks
+            has_damage = False
+            damage_reason = ""
+            damage_amount = 0.0
+            damage_id = ""
             if condition in ["Damaged", "Dysfunctional"]:
+                has_damage = True
                 cursor.execute("UPDATE Umbrella SET condition = ?, current_status = 'Maintenance' WHERE umbrella_id = ?", (condition, umb_id))
                 prefix = "DMG" if condition == "Damaged" else "DYS"
-                amount = 50.00 if condition == "Damaged" else 200.00
+                damage_amount = 50.00 if condition == "Damaged" else 200.00
+                damage_reason = f"Returned Umbrella {condition}"
                 
                 cursor.execute("SELECT penalty_id FROM penalty WHERE penalty_id LIKE ? ORDER BY penalty_id DESC LIMIT 1", (f"{prefix}-{date_prefix}-%",))
                 last_pen = cursor.fetchone()
                 new_seq = int(last_pen[0].split("-")[2]) + 1 if last_pen else 1
-                custom_penalty_id = f"{prefix}-{date_prefix}-{new_seq:03d}"
+                damage_id = f"{prefix}-{date_prefix}-{new_seq:03d}"
                 
                 cursor.execute("""
                     INSERT INTO penalty (penalty_id, user_id, penalty_reason, date_issued, amount, paid_status)
                     VALUES (?, ?, ?, ?, ?, 'Unpaid')
-                """, (custom_penalty_id, user_id, f"Returned Umbrella {condition}", today_str, amount))
-                fines.append(f"Property Damage Fine (₱{amount:.2f}) - Ref: {custom_penalty_id}")
+                """, (damage_id, user_id, damage_reason, today_str, damage_amount))
+                fines.append(f"Property Damage Fine (₱{damage_amount:.2f}) - Ref: {damage_id}")
                 
             # Overdue fee calculation
+            has_late = False
+            late_reason = "Late Return Overdue Fee"
+            late_fee = 15.00
+            late_id = ""
             try:
                 parts = due_date_str.split(" ")
                 dt_parts = parts[0].split("-")
@@ -1233,7 +1752,7 @@ class ReturnPage(QWidget):
                 due_datetime = now
                 
             if now > due_datetime:
-                late_fee = 15.00
+                has_late = True
                 cursor.execute("SELECT penalty_id FROM penalty WHERE penalty_id LIKE 'LATE-%' ORDER BY penalty_id DESC LIMIT 1")
                 last_lt = cursor.fetchone()
                 new_lt_seq = int(last_lt[0].split("-")[1]) + 1 if last_lt else 1
@@ -1248,11 +1767,25 @@ class ReturnPage(QWidget):
             conn.commit()
             conn.close()
             
-            ret_msg = f"Equipment safely returned and checked-in."
             if fines:
-                ret_msg += "\n\n⚠️ INVOICED FINES APPLIED:\n" + "\n".join(fines)
+                if has_damage and has_late:
+                    reason_str = "Damage & Late Return Fee"
+                    total_amt = damage_amount + late_fee
+                    ref_str = f"{damage_id} / {late_id}"
+                elif has_damage:
+                    reason_str = damage_reason
+                    total_amt = damage_amount
+                    ref_str = damage_id
+                else:
+                    reason_str = late_reason
+                    total_amt = late_fee
+                    ref_str = late_id
                 
-            QMessageBox.information(self, "Turn-In Check-In Successful", ret_msg)
+                dlg = ReturnPenaltySuccessDialog(reason_str, total_amt, ref_str, self)
+                dlg.exec()
+            else:
+                dlg = ReturnSuccessDialog(self)
+                dlg.exec()
             
             self.refresh()
             self.main_win.refresh_stats()
@@ -1502,6 +2035,8 @@ class RaincheckMainWindow(QMainWindow):
         self.dashboard_view.avail_card.set_value(avail)
         self.dashboard_view.active_card.set_value(active)
         self.dashboard_view.overdue_card.set_value(overdue)
+        if hasattr(self.dashboard_view, "load_table_data"):
+            self.dashboard_view.load_table_data()
         
     def refresh_payment_logs(self):
         """Help fulfill cross-tab calls in payments."""
