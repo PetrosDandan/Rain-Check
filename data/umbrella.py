@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QListView, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QFrame, QLineEdit, QDialog
@@ -164,7 +165,7 @@ class UmbrellasTab(QWidget):
                 border: 1px solid #11224d;
             }
         """)
-        self.search_input.textChanged.connect(self.search_changed)
+        self.search_input.returnPressed.connect(lambda: self.search_changed(self.search_input.text()))
         toolbar_layout.addWidget(self.search_input)
         
         toolbar_layout.addStretch()
@@ -217,7 +218,7 @@ class UmbrellasTab(QWidget):
                 font-size: 11px;
             }
             QHeaderView::section {
-                background-color: #fefcf0; /* Light parchment gold header matching screenshot */
+                background-color: #fefcf0; 
                 color: #4b5563;
                 padding: 10px;
                 border: 1px solid #e5e7eb;
@@ -265,7 +266,6 @@ class UmbrellasTab(QWidget):
             cursor.execute("SELECT COUNT(*) FROM Umbrella")
             tot = cursor.fetchone()[0]
             
-            cursor.add_cb = True # temporary anchor
             cursor.execute("SELECT COUNT(*) FROM Umbrella WHERE current_status = 'Available'")
             avail = cursor.fetchone()[0]
             
@@ -347,11 +347,11 @@ class UmbrellasTab(QWidget):
                 cond_font.setBold(True)
                 cond_itm.setFont(cond_font)
                 if condition.upper() == "GOOD":
-                    cond_itm.setForeground(QColor("#0284c7")) # Sky
+                    cond_itm.setForeground(QColor("#0284c7")) 
                 elif condition.upper() in ["DAMAGED", "MAINTENANCE"]:
-                    cond_itm.setForeground(QColor("#d97706")) # Yellow/Gold
-                else: # Dysfunctional
-                    cond_itm.setForeground(QColor("#dc2626")) # Red
+                    cond_itm.setForeground(QColor("#d97706")) 
+                else: 
+                    cond_itm.setForeground(QColor("#dc2626")) 
                 cond_itm.setFlags(cond_itm.flags() ^ Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(idx, 1, cond_itm)
                 
@@ -362,11 +362,11 @@ class UmbrellasTab(QWidget):
                 stat_font.setBold(True)
                 stat_itm.setFont(stat_font)
                 if status.upper() == "AVAILABLE":
-                    stat_itm.setForeground(QColor("#047857")) # Green
+                    stat_itm.setForeground(QColor("#047857")) 
                 elif status.upper() == "RENTED":
-                    stat_itm.setForeground(QColor("#b45309")) # Gold
-                else: # Maintenance
-                    stat_itm.setForeground(QColor("#dc2626")) # Red
+                    stat_itm.setForeground(QColor("#b45309")) 
+                else: 
+                    stat_itm.setForeground(QColor("#dc2626")) 
                 stat_itm.setFlags(stat_itm.flags() ^ Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(idx, 2, stat_itm)
                 
@@ -377,7 +377,7 @@ class UmbrellasTab(QWidget):
                 ren_itm.setFlags(ren_itm.flags() ^ Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(idx, 3, ren_itm)
                 
-                # ACTIONS Widget (Edit/Delete buttons nicely grouped)
+                # ACTIONS Widget
                 actions_widget = QWidget()
                 actions_layout = QHBoxLayout(actions_widget)
                 actions_layout.setContentsMargins(6, 2, 6, 2)
@@ -433,10 +433,10 @@ class UmbrellasTab(QWidget):
             print(f"Error drawing umbrella table: {e}")
 
     def columns_layout_adjust(self):
-        # Center column sizing
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(4, 150)
-        self.table.setRowHeight(0, 42)
+        if self.table.rowCount() > 0:
+            self.table.setRowHeight(0, 42)
 
     def get_last_renter(self, umb_id):
         try:
@@ -457,7 +457,6 @@ class UmbrellasTab(QWidget):
             return "-"
 
     def draw_pagination_controls(self, total_matches):
-        # Clear child layout
         for i in reversed(range(self.pages_layout.count())): 
             self.pages_layout.itemAt(i).widget().setParent(None)
             
@@ -498,11 +497,9 @@ class UmbrellasTab(QWidget):
             btn.clicked.connect(lambda: self.switch_page(target_page))
             return btn
 
-        # Left arrow
         prev_page = max(0, self.current_page - 1)
         self.pages_layout.addWidget(create_page_btn("<", prev_page))
         
-        # Display page labels (e.g. 1, 2, 3 ... 8)
         max_visible = 3
         for i in range(total_pages):
             if i < max_visible or i == total_pages - 1:
@@ -513,7 +510,6 @@ class UmbrellasTab(QWidget):
                 dots.setStyleSheet("color: #6b7280; font-size: 11px;")
                 self.pages_layout.addWidget(dots)
                 
-        # Right arrow
         next_page = min(total_pages - 1, self.current_page + 1)
         self.pages_layout.addWidget(create_page_btn(">", next_page))
 
@@ -524,12 +520,159 @@ class UmbrellasTab(QWidget):
     def add_umbrella_dialog(self):
         dialog = UmbrellaRegistrationDialog(self.db_path, self)
         if dialog.exec():
-            # Refresh dashboard stats
             main_win = self.window()
             if main_win and hasattr(main_win, "refresh_stats"):
                 main_win.refresh_stats()
                 
             self.load_umbrellas()
+
+    def edit_umbrella(self, umb_id, condition, status):
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Edit Umbrella - {umb_id}")
+        dialog.setFixedWidth(300)
+        dialog.setStyleSheet("background-color: #ffffff;")
+        
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        cond_lbl = QLabel("Update Condition:")
+        cond_cmb = QComboBox()
+        cond_cmb.setView(QListView())
+        cond_cmb.addItems(["Good", "Damaged", "Dysfunctional"])
+        cond_cmb.setCurrentText(condition)
+        
+        stat_lbl = QLabel("Update Status:")
+        stat_cmb = QComboBox()
+        stat_cmb.setView(QListView())
+        stat_cmb.addItems(["Available", "Rented", "Maintenance"])
+        stat_cmb.setCurrentText(status)
+
+        combos = [cond_cmb, stat_cmb]
+        for combo in combos:
+            combo.setStyleSheet("""
+                QComboBox {
+                    background-color: #ffffff;
+                    color: #111827;
+                    border: 1px solid #d1d5db;
+                    border-radius: 6px;
+                    padding: 8px 12px;
+                    font-size: 13px;
+                }
+                QComboBox QAbstractItemView {
+                    background-color: #ffffff;
+                    color: #111827;
+                    selection-background-color: #11224d;
+                    selection-color: #ffffff;
+                    border: 1px solid #d1d5db;
+                }
+            """)
+
+        layout.addWidget(cond_lbl)
+        layout.addWidget(cond_cmb)
+        layout.addWidget(stat_lbl)
+        layout.addWidget(stat_cmb)
+
+        btn_box = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #11224d;
+                color: #ffffff;
+                border: none;
+                padding: 6px 14px;
+                font-weight: bold;
+                border-radius: 4px;
+            }
+        """)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #e5e7eb;
+                color: #374151;
+                border: none;
+                padding: 6px 14px;
+                border-radius: 4px;
+            }
+        """)
+        
+        btn_box.addWidget(cancel_btn)
+        btn_box.addWidget(save_btn)
+        layout.addLayout(btn_box)
+
+        cancel_btn.clicked.connect(dialog.reject)
+        
+        def save():
+            new_cond = cond_cmb.currentText()
+            new_stat = stat_cmb.currentText()
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE Umbrella 
+                    SET condition = ?, current_status = ? 
+                    WHERE umbrella_id = ?
+                """, (new_cond, new_stat, umb_id))
+                conn.commit()
+                conn.close()
+                dialog.accept()
+                
+                main_win = self.window()
+                if main_win and hasattr(main_win, "refresh_stats"):
+                    main_win.refresh_stats()
+                    
+                self.load_umbrellas()
+            except Exception as e:
+                QMessageBox.critical(dialog, "Database Error", f"Updating failed: {e}")
+
+        save_btn.clicked.connect(save)
+        dialog.exec()
+
+    def delete_umbrella(self, umb_id):
+        try:
+            # 1. Connect and verify the umbrella's current status first
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT current_status FROM Umbrella WHERE umbrella_id = ?", (umb_id,))
+            res = cursor.fetchone()
+            
+            if res and res[0].upper() == "RENTED":
+                conn.close()
+                QMessageBox.warning(
+                    self, "Cannot Delete", 
+                    "Cannot be deleted, currently being rented. Settle renting status before deleting."
+                )
+                return
+                
+            conn.close()
+        except Exception as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to check umbrella status: {e}")
+            return
+
+        # 2. If it isn't rented, ask for confirmation before deleting
+        confirm = QMessageBox.question(
+            self, "Confirm Deletion",
+            f"Are you sure you want to permanently delete Umbrella ID {umb_id} from the inventory?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if confirm == QMessageBox.StandardButton.Yes:
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM Umbrella WHERE umbrella_id = ?", (umb_id,)) 
+                conn.commit()
+                conn.close()
+                
+                main_win = self.window()
+                if main_win and hasattr(main_win, "refresh_stats"):
+                    main_win.refresh_stats()
+                    
+                self.load_umbrellas()
+            except Exception as e:
+                QMessageBox.critical(self, "Database Error", f"Failed to delete umbrella: {e}")
+
 
 class UmbrellaRegistrationDialog(QDialog):
     """Custom high-fidelity registration dialog matching the 'Register new umbrella' UI mockup."""
@@ -537,6 +680,7 @@ class UmbrellaRegistrationDialog(QDialog):
         super().__init__(parent)
         self.db_path = db_path
         self.init_ui()
+
     def init_ui(self):
         self.setWindowTitle("Register New Umbrella")
         self.setFixedWidth(400)
@@ -564,7 +708,6 @@ class UmbrellaRegistrationDialog(QDialog):
         header_layout.setContentsMargins(20, 18, 20, 18)
         header_layout.setSpacing(14)
         
-        # Yellow umbrella icon badge
         icon_badge = QLabel()
         icon_badge.setFixedSize(44, 44)
         icon_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -623,7 +766,6 @@ class UmbrellaRegistrationDialog(QDialog):
         body_layout.setContentsMargins(24, 24, 24, 24)
         body_layout.setSpacing(18)
         
-        # 1. Umbrella ID
         id_layout = QVBoxLayout()
         id_layout.setSpacing(6)
         id_lbl = QLabel("UMBRELLA ID")
@@ -654,7 +796,6 @@ class UmbrellaRegistrationDialog(QDialog):
         id_layout.addWidget(self.id_input)
         body_layout.addLayout(id_layout)
         
-        # 2. Condition
         cond_layout = QVBoxLayout()
         cond_layout.setSpacing(6)
         cond_lbl = QLabel("CONDITION")
@@ -737,10 +878,8 @@ class UmbrellaRegistrationDialog(QDialog):
         cond_layout.addWidget(self.cond_cmb)
         body_layout.addLayout(cond_layout)
         
-        # Spacer
         body_layout.addSpacing(6)
         
-        # 3. Actions Row
         buttons_layout = QHBoxLayout()
         buttons_layout.setSpacing(12)
         buttons_layout.addStretch()
@@ -791,7 +930,7 @@ class UmbrellaRegistrationDialog(QDialog):
 
     def save(self):
         uid = self.id_input.text().strip()
-        cond_val = self.cond_cmb.currentText().capitalize().capitalize()
+        cond_val = self.cond_cmb.currentText().capitalize()
         
         if not uid:
             QMessageBox.warning(self, "Validation Error", "Please provide a valid Umbrella ID.")
@@ -801,7 +940,6 @@ class UmbrellaRegistrationDialog(QDialog):
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Check duplicate umbrella ID
             cursor.execute("SELECT umbrella_id FROM Umbrella WHERE umbrella_id = ?", (uid,))
             if cursor.fetchone():
                 QMessageBox.warning(self, "Duplicate ID", f"Umbrella ID '{uid}' is already registered.")
@@ -817,131 +955,3 @@ class UmbrellaRegistrationDialog(QDialog):
             self.accept()
         except Exception as e:
             QMessageBox.critical(self, "Database Error", f"Failed to save umbrella: {e}")
-
-    def edit_umbrella(self, umb_id, condition, status):
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"Edit Umbrella - {umb_id}")
-        dialog.setFixedWidth(300)
-        dialog.setStyleSheet("background-color: #ffffff;")
-        
-        layout = QVBoxLayout(dialog)
-        layout.setSpacing(10)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        # Condition
-        cond_lbl = QLabel("Update Condition:")
-        cond_cmb = QComboBox()
-        cond_cmb.setView(QListView())
-        cond_cmb.addItems(["Good", "Damaged", "Dysfunctional"])
-        cond_cmb.setCurrentText(condition)
-        
-        # Status
-        stat_lbl = QLabel("Update Status:")
-        stat_cmb = QComboBox()
-        stat_cmb.setView(QListView())
-        stat_cmb.addItems(["Available", "Rented", "Maintenance"])
-        stat_cmb.setCurrentText(status)
-
-        combos = [cond_cmb, stat_cmb]
-        for combo in combos:
-            combo.setStyleSheet("""
-                QComboBox {
-                    background-color: #ffffff;
-                    color: #111827;
-                    border: 1px solid #d1d5db;
-                    border-radius: 6px;
-                    padding: 8px 12px;
-                    font-size: 13px;
-                }
-                QComboBox QAbstractItemView {
-                    background-color: #ffffff;
-                    color: #111827;
-                    selection-background-color: #11224d;
-                    selection-color: #ffffff;
-                    border: 1px solid #d1d5db;
-                }
-            """)
-
-        layout.addWidget(cond_lbl)
-        layout.addWidget(cond_cmb)
-        layout.addWidget(stat_lbl)
-        layout.addWidget(stat_cmb)
-
-        btn_box = QHBoxLayout()
-        save_btn = QPushButton("Save")
-        save_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #11224d;
-                color: #ffffff;
-                border: none;
-                padding: 6px 14px;
-                font-weight: bold;
-                border-radius: 4px;
-            }
-        """)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #e5e7eb;
-                color: #374151;
-                border: none;
-                padding: 6px 14px;
-                border-radius: 4px;
-            }
-        """)
-        
-        btn_box.addWidget(cancel_btn)
-        btn_box.addWidget(save_btn)
-        layout.addLayout(btn_box)
-
-        cancel_btn.clicked.connect(dialog.reject)
-        
-        def save():
-            new_cond = cond_cmb.currentText()
-            new_stat = stat_cmb.currentText()
-            try:
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE Umbrella 
-                    SET condition = ?, current_status = ? 
-                    WHERE umbrella_id = ?
-                """, (new_cond, new_stat, umb_id))
-                conn.commit()
-                conn.close()
-                dialog.accept()
-                
-                # Refresh dashboard stats when inventory changes
-                main_win = self.window()
-                if main_win and hasattr(main_win, "refresh_stats"):
-                    main_win.refresh_stats()
-                    
-                self.load_umbrellas()
-            except Exception as e:
-                QMessageBox.critical(dialog, "Database Error", f"Updating failed: {e}")
-
-        save_btn.clicked.connect(save)
-        dialog.exec()
-
-    def delete_umbrella(self, umb_id):
-        rep = QMessageBox.question(
-            self, "Delete Umbrella", 
-            f"Are you sure you want to delete umbrella {umb_id}?", 
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if rep == QMessageBox.StandardButton.Yes:
-            try:
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM Umbrella WHERE umbrella_id = ?", (umb_id,))
-                conn.commit()
-                conn.close()
-                
-                # Refresh dashboard stats when inventory changes
-                main_win = self.window()
-                if main_win and hasattr(main_win, "refresh_stats"):
-                    main_win.refresh_stats()
-                    
-                self.load_umbrellas()
-            except Exception as e:
-                QMessageBox.critical(self, "Database Error", f"Failed to delete umbrella: {e}")

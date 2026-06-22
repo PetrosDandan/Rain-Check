@@ -1448,7 +1448,7 @@ class ReturnPage(QWidget):
         step1_layout.addWidget(step1_title)
         
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search user ID or name...")
+        self.search_input.setPlaceholderText("Search User ID or Rental ID and Press Enter")
         self.search_input.setStyleSheet("""
             QLineEdit {
                 background-color: #ffffff;
@@ -1462,7 +1462,7 @@ class ReturnPage(QWidget):
                 border: 1px solid #11224d;
             }
         """)
-        self.search_input.textChanged.connect(self.search_active_rental)
+        self.search_input.returnPressed.connect(lambda: self.search_active_rental(self.search_input.text()))
         step1_layout.addWidget(self.search_input)
         
         active_found_lbl = QLabel("ACTIVE RENTAL FOUND")
@@ -1599,7 +1599,7 @@ class ReturnPage(QWidget):
         query_str = text.strip()
         if not query_str:
             self.active_rent = None
-            self.user_lbl.setText("👤 User:       --")
+            self.user_lbl.setText("👤 User:      --")
             self.umbrella_lbl.setText("🌂 Umbrella:   --")
             self.borrowed_lbl.setText("📅 Borrowed:   --")
             self.due_lbl.setText("🕒 Due Date:   --")
@@ -1611,16 +1611,17 @@ class ReturnPage(QWidget):
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            # Fetch user name, umbrella id, rent particulars
+            
+            # Strict verification matching: only look for User ID or Rent ID
             cursor.execute("""
                 SELECT r.rent_id, r.user_id, r.umbrella_id, r.rent_date, r.due_date, u.first_name, u.last_name
                 FROM rents r
                 JOIN USER u ON r.user_id = u.user_id
                 LEFT JOIN returns ret ON r.rent_id = ret.rent_id
-                WHERE ret.return_id IS NULL AND (r.user_id = ? OR (u.first_name || ' ' || u.last_name) LIKE ?)
+                WHERE ret.return_id IS NULL AND (r.user_id = ? OR r.rent_id = ?)
                 ORDER BY r.rent_date DESC
                 LIMIT 1
-            """, (query_str, f"%{query_str}%"))
+            """, (query_str, query_str))
             res = cursor.fetchone()
             conn.close()
             
@@ -1633,12 +1634,9 @@ class ReturnPage(QWidget):
                 
                 self.user_lbl.setText(f"👤 User:       {f_name} {l_name} ({user_id})")
                 self.umbrella_lbl.setText(f"🌂 Umbrella:   {umb_id}")
-                
-                # Dynamic visual representation of date formatting
                 self.borrowed_lbl.setText(f"📅 Borrowed:   {rent_date}")
                 self.due_lbl.setText(f"🕒 Due Date:   {due_date}")
                 
-                # Overdue check
                 overdue = False
                 overdue_hours = 0
                 now = datetime.now()
@@ -1678,7 +1676,7 @@ class ReturnPage(QWidget):
                 self.process_btn.setEnabled(True)
             else:
                 self.active_rent = None
-                self.user_lbl.setText("👤 User:       --")
+                self.user_lbl.setText("👤 User:      --")
                 self.umbrella_lbl.setText("🌂 Umbrella:   --")
                 self.borrowed_lbl.setText("📅 Borrowed:   --")
                 self.due_lbl.setText("🕒 Due Date:   --")
