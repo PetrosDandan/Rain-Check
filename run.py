@@ -1026,7 +1026,7 @@ class RentPage(QWidget):
         step1_layout.addWidget(step1_title)
         
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search user ID or name...")
+        self.search_input.setPlaceholderText("Enter User ID and Press Enter")
         self.search_input.setStyleSheet("""
             QLineEdit {
                 background-color: #ffffff;
@@ -1040,7 +1040,7 @@ class RentPage(QWidget):
                 border: 1px solid #11224d;
             }
         """)
-        self.search_input.textChanged.connect(self.search_user_changed)
+        self.search_input.returnPressed.connect(lambda: self.search_user_changed(self.search_input.text()))
         step1_layout.addWidget(self.search_input)
         
         user_found_lbl = QLabel("USER FOUND")
@@ -1228,7 +1228,9 @@ class RentPage(QWidget):
             print(f"Error loading umbrellas dropdown: {e}")
 
     def search_user_changed(self, text):
-        query_str = text.strip()
+        query_str = self.search_input.text().strip()
+        
+        # Safe Reset: Keeps the UI clean if they hit enter on an empty input
         if not query_str:
             self.selected_user = None
             self.user_field_lbl.setText("👤 User:   --")
@@ -1237,20 +1239,23 @@ class RentPage(QWidget):
             self.error_banner.hide()
             self.confirm_btn.setEnabled(False)
             return
-            
+
+        # --- Your Database Query below this line ---
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            cursor.execute("""
+            
+            # Exact match by user_id column only
+            query = """
                 SELECT user_id, first_name, last_name, m_i 
                 FROM USER 
-                WHERE user_id = ? OR (first_name || ' ' || last_name) LIKE ? 
-                LIMIT 1
-            """, (query_str, f"%{query_str}%"))
-            user = cursor.fetchone()
+                WHERE user_id = ?
+            """
+            cursor.execute(query, (query_str,))
+            rows = cursor.fetchall()
             
-            if user:
-                user_id, f_name, l_name, m_i = user
+            if rows:
+                user_id, f_name, l_name, m_i = rows[0]
                 m_i_str = f" {m_i}." if m_i else ""
                 full_name = f"{f_name}{m_i_str} {l_name}"
                 self.selected_user = {"id": user_id, "name": full_name}
