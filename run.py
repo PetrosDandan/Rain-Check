@@ -2016,7 +2016,15 @@ class RaincheckMainWindow(QMainWindow):
         # Set initial active view Dashboard
         self.nav_buttons[0].setChecked(True)
         self.switch_view(0)
-        
+    
+    def keyPressEvent(self, event):
+        # If the user presses the Escape key, cleanly exit the application
+        if event.key() == Qt.Key.Key_Escape:
+            self.close()
+        else:
+            # Let other key presses behave normally
+            super().keyPressEvent(event)
+       
     def switch_view(self, index):
         self.stacked_widget.setCurrentIndex(index)
         self.nav_buttons[index].setChecked(True)
@@ -2108,14 +2116,14 @@ class RaincheckMainWindow(QMainWindow):
             return 0, 0, 0
 
 
+
 if __name__ == "__main__":
     init_database()
     app = QApplication(sys.argv)
-    
     # Custom display font
     font = QFont("Segoe UI", 9)
     app.setFont(font)
     
     window = RaincheckMainWindow()
-    window.show()
+    window.showFullScreen()
     sys.exit(app.exec())
