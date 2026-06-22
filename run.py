@@ -1713,7 +1713,7 @@ class ReturnPage(QWidget):
         user_id = self.active_rent["user_id"]
         due_date_str = self.active_rent["due_date"]
         
-        condition = self.selected_condition
+        condition = self.selected_condition  # This will be "Lost" if chosen
         
         try:
             conn = sqlite3.connect(self.db_path)
@@ -1727,36 +1727,7 @@ class ReturnPage(QWidget):
             today_str = f"{now.year}-{now.month:02d}-{now.day:02d} {hours:02d}:{now.minute:02d} {ampm}"
             date_prefix = now.strftime("%m%d%y")
             
-            # Log Return Record
-            cursor.execute("INSERT INTO returns (rent_id, return_date, return_condition) VALUES (?, ?, ?)", (rent_id, today_str, condition))
-            cursor.execute("UPDATE Umbrella SET current_status = 'Available' WHERE umbrella_id = ?", (umb_id,))
-            
-            fines = []
-            
-            # Damage checks
-            has_damage = False
-            damage_reason = ""
-            damage_amount = 0.0
-            damage_id = ""
-            if condition in ["Damaged", "Dysfunctional"]:
-                has_damage = True
-                cursor.execute("UPDATE Umbrella SET condition = ?, current_status = 'Maintenance' WHERE umbrella_id = ?", (condition, umb_id))
-                prefix = "DMG" if condition == "Damaged" else "DYS"
-                damage_amount = 50.00 if condition == "Damaged" else 200.00
-                damage_reason = f"Returned Umbrella {condition}"
-                
-                cursor.execute("SELECT penalty_id FROM penalty WHERE penalty_id LIKE ? ORDER BY penalty_id DESC LIMIT 1", (f"{prefix}-{date_prefix}-%",))
-                last_pen = cursor.fetchone()
-                new_seq = int(last_pen[0].split("-")[2]) + 1 if last_pen else 1
-                damage_id = f"{prefix}-{date_prefix}-{new_seq:03d}"
-                
-                cursor.execute("""
-                    INSERT INTO penalty (penalty_id, user_id, penalty_reason, date_issued, amount, paid_status)
-                    VALUES (?, ?, ?, ?, ?, 'Unpaid')
-                """, (damage_id, user_id, damage_reason, today_str, damage_amount))
-                fines.append(f"Property Damage Fine (₱{damage_amount:.2f}) - Ref: {damage_id}")
-                
-            # Overdue fee calculation
+            # --- OVERDUE LATE FEE CALCULATION ---
             has_late = False
             late_reason = "Late Return Overdue Fee"
             late_fee = 15.00
@@ -1781,40 +1752,113 @@ class ReturnPage(QWidget):
                 last_lt = cursor.fetchone()
                 new_lt_seq = int(last_lt[0].split("-")[1]) + 1 if last_lt else 1
                 late_id = f"LATE-{new_lt_seq:05d}"
+            
+            # --- BRANCH OUT TO HANDLING BASED ON OPTION ---
+            fines = []
+            
+            if condition == "Lost":
+                # 1. Complete the Return Log under a special status condition
+                cursor.execute("INSERT INTO returns (rent_id, return_date, return_condition) VALUES (?, ?, ?)", (rent_id, today_str, "Lost"))
                 
+                # 2. Update umbrella inventory state to reflect it's gone
+                cursor.execute("UPDATE Umbrella SET current_status = 'Maintenance', condition = 'Dysfunctional' WHERE umbrella_id = ?", (umb_id,))
+                
+                # 3. Calculate unique sequence key formatting for LOST penalties
+                cursor.execute("SELECT penalty_id FROM penalty WHERE penalty_id LIKE 'LOST-%' ORDER BY penalty_id DESC LIMIT 1")
+                last_pen = cursor.fetchone()
+                new_seq = int(last_pen[0].split("-")[2]) + 1 if last_pen else 1
+                lost_id = f"LST-{date_prefix}-{new_seq:03d}"
+                
+                lost_amount = 250.00  # Flat compensation/replacement item charge fee
+                lost_reason = f"Lost Umbrella"
+                
+                # 4. Insert dynamic replacement charge row 
                 cursor.execute("""
                     INSERT INTO penalty (penalty_id, user_id, penalty_reason, date_issued, amount, paid_status)
-                    VALUES (?, ?, 'Late Return Overdue Fee', ?, ?, 'Unpaid')
-                """, (late_id, user_id, today_str, late_fee))
-                fines.append(f"Overdue Late Return Fine (₱{late_fee:.2f}) - Ref: {late_id}")
+                    VALUES (?, ?, ?, ?, ?, 'Unpaid')
+                """, (lost_id, user_id, lost_reason, today_str, lost_amount))
+                fines.append(f"Umbrella Replacement Charge (₱{lost_amount:.2f}) - Ref: {lost_id}")
                 
+                # 5. Handle compound layout values if it's both late and lost
+                if has_late:
+                    cursor.execute("""
+                        INSERT INTO penalty (penalty_id, user_id, penalty_reason, date_issued, amount, paid_status)
+                        VALUES (?, ?, 'Late Return Overdue Fee', ?, ?, 'Unpaid')
+                    """, (late_id, user_id, today_str, late_fee))
+                    fines.append(f"Overdue Late Return Fine (₱{late_fee:.2f}) - Ref: {late_id}")
+                    
+                    reason_str = "Lost Umbrella & Overdue Fine"
+                    total_amt = lost_amount + late_fee
+                    ref_str = f"{lost_id} / {late_id}"
+                else:
+                    reason_str = lost_reason
+                    total_amt = lost_amount
+                    ref_str = lost_id
+                    
+            else:
+                # --- STANDARD PROCESS (GOOD / DAMAGED / DYSFUNCTIONAL) ---
+                cursor.execute("INSERT INTO returns (rent_id, return_date, return_condition) VALUES (?, ?, ?)", (rent_id, today_str, condition))
+                cursor.execute("UPDATE Umbrella SET current_status = 'Available' WHERE umbrella_id = ?", (umb_id,))
+                
+                has_damage = False
+                damage_reason = ""
+                damage_amount = 0.0
+                damage_id = ""
+                if condition in ["Damaged", "Dysfunctional"]:
+                    has_damage = True
+                    cursor.execute("UPDATE Umbrella SET condition = ?, current_status = 'Maintenance' WHERE umbrella_id = ?", (condition, umb_id))
+                    prefix = "DMG" if condition == "Damaged" else "DYS"
+                    damage_amount = 50.00 if condition == "Damaged" else 200.00
+                    damage_reason = f"Returned Umbrella {condition}"
+                    
+                    cursor.execute("SELECT penalty_id FROM penalty WHERE penalty_id LIKE ? ORDER BY penalty_id DESC LIMIT 1", (f"{prefix}-{date_prefix}-%",))
+                    last_pen = cursor.fetchone()
+                    new_seq = int(last_pen[0].split("-")[2]) + 1 if last_pen else 1
+                    damage_id = f"{prefix}-{date_prefix}-{new_seq:03d}"
+                    
+                    cursor.execute("""
+                        INSERT INTO penalty (penalty_id, user_id, penalty_reason, date_issued, amount, paid_status)
+                        VALUES (?, ?, ?, ?, ?, 'Unpaid')
+                    """, (damage_id, user_id, damage_reason, today_str, damage_amount))
+                    fines.append(f"Property Damage Fine (₱{damage_amount:.2f}) - Ref: {damage_id}")
+                    
+                if has_late:
+                    cursor.execute("""
+                        INSERT INTO penalty (penalty_id, user_id, penalty_reason, date_issued, amount, paid_status)
+                        VALUES (?, ?, 'Late Return Overdue Fee', ?, ?, 'Unpaid')
+                    """, (late_id, user_id, today_str, late_fee))
+                    fines.append(f"Overdue Late Return Fine (₱{late_fee:.2f}) - Ref: {late_id}")
+                    
+                if fines:
+                    if has_damage and has_late:
+                        reason_str = "Damage & Late Return Fee"
+                        total_amt = damage_amount + late_fee
+                        ref_str = f"{damage_id} / {late_id}"
+                    elif has_damage:
+                        reason_str = damage_reason
+                        total_amt = damage_amount
+                        ref_str = damage_id
+                    else:
+                        reason_str = late_reason
+                        total_amt = late_fee
+                        ref_str = late_id
+
+            # --- COMMIT CHANGES & EXECUTE SUCCESS SCREEN FEEDBACKS ---
             conn.commit()
             conn.close()
             
             if fines:
-                if has_damage and has_late:
-                    reason_str = "Damage & Late Return Fee"
-                    total_amt = damage_amount + late_fee
-                    ref_str = f"{damage_id} / {late_id}"
-                elif has_damage:
-                    reason_str = damage_reason
-                    total_amt = damage_amount
-                    ref_str = damage_id
-                else:
-                    reason_str = late_reason
-                    total_amt = late_fee
-                    ref_str = late_id
-                
                 dlg = ReturnPenaltySuccessDialog(reason_str, total_amt, ref_str, self)
                 dlg.exec()
             else:
                 dlg = ReturnSuccessDialog(self)
                 dlg.exec()
-            
+                
             self.refresh()
             self.main_win.refresh_stats()
             if hasattr(self.main_win, "rent_view"):
                 self.main_win.rent_view.refresh()
+                
         except Exception as e:
             QMessageBox.critical(self, "Return Error", f"Failed to record check-in: {e}")
 

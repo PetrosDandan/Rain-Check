@@ -333,23 +333,58 @@ class UsersTab(QWidget):
             self.load_users()
 
     def delete_student(self, user_id):
-        confirm = QMessageBox.question(
-            self, "Confirm Deletion",
-            f"Are you sure you want to permanently delete Student ID {user_id} from the system database?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if confirm == QMessageBox.StandardButton.Yes:
-            try:
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 1. FIXED: Subquery check matching rent_id across rents and returns
+            cursor.execute("""
+                SELECT COUNT(*) FROM rents 
+                WHERE user_id = ? AND rent_id NOT IN (SELECT rent_id FROM returns)
+            """, (user_id,))
+            active_rents = cursor.fetchone()[0]
+            
+            if active_rents > 0:
+                QMessageBox.warning(
+                    self, "Deletion Blocked",
+                    f"Cannot delete Student ID {user_id}.\nThis student currently has an active umbrella rental checked out."
+                )
+                conn.close()
+                return
+                
+            # 2. Check for Unresolved Penalties
+            cursor.execute("""
+                SELECT COUNT(*) FROM penalty 
+                WHERE user_id = ? AND paid_status IN ('Unpaid', 'Pending')
+            """, (user_id,))
+            unresolved_penalties = cursor.fetchone()[0]
+            
+            if unresolved_penalties > 0:
+                QMessageBox.warning(
+                    self, "Deletion Blocked",
+                    f"Cannot delete Student ID {user_id}.\nThis student has unresolved or unpaid penalties on their account."
+                )
+                conn.close()
+                return
+                
+            # 3. Proceed with deletion confirmation
+            confirm = QMessageBox.question(
+                self, "Confirm Deletion",
+                f"Are you sure you want to permanently delete Student ID {user_id} from the system database?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            
+            if confirm == QMessageBox.StandardButton.Yes:
                 cursor.execute("DELETE FROM USER WHERE user_id = ?", (user_id,))
                 conn.commit()
                 conn.close()
                 self.load_users()
-            except Exception as e:
-                QMessageBox.critical(self, "Database Error", f"Failed to remove user: {e}")
-
+            else:
+                conn.close()
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Database Error", f"Failed to remove user: {e}")
 
 class StudentRegistrationDialog(QDialog):
     """Custom registration dialog supporting both creation and non-RFID modification modes."""
