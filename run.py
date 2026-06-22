@@ -1521,15 +1521,20 @@ class ReturnPage(QWidget):
         )
         self.damaged_opt_card = ClickableOptionCard(
             "Damaged", "Umbrella returned with some visible damage", 
-            "#dc2626", "#fef2f2"
+            "#dc7826", "#fef2f2"
         )
-        
+        self.lost_opt_card = ClickableOptionCard(
+            "Lost", "Umbrella not returned or completely unusable", 
+            "#b91c1c", "#fef2f2"
+        )
         self.good_opt_card.clicked.connect(self.select_good_condition)
         self.damaged_opt_card.clicked.connect(self.select_damaged_condition)
-        
+        self.lost_opt_card.clicked.connect(self.select_lost_condition)
+
         step2_layout.addWidget(self.good_opt_card)
         step2_layout.addWidget(self.damaged_opt_card)
-        
+        step2_layout.addWidget(self.lost_opt_card)
+
         add_subtle_shadow(self.step2_card)
         layout.addWidget(self.step2_card)
 
@@ -1585,15 +1590,28 @@ class ReturnPage(QWidget):
         self.selected_condition = "Good"
         self.good_opt_card.is_selected = True
         self.damaged_opt_card.is_selected = False
+        self.lost_opt_card.is_selected = False
         self.good_opt_card.update_style()
         self.damaged_opt_card.update_style()
+        self.lost_opt_card.update_style()
 
     def select_damaged_condition(self):
         self.selected_condition = "Damaged"
         self.good_opt_card.is_selected = False
         self.damaged_opt_card.is_selected = True
+        self.lost_opt_card.is_selected = False
         self.good_opt_card.update_style()
         self.damaged_opt_card.update_style()
+        self.lost_opt_card.update_style()
+
+    def select_lost_condition(self):
+        self.selected_condition = "Lost"
+        self.good_opt_card.is_selected = False
+        self.damaged_opt_card.is_selected = False
+        self.lost_opt_card.is_selected = True
+        self.good_opt_card.update_style()
+        self.damaged_opt_card.update_style()
+        self.lost_opt_card.update_style()
 
     def search_active_rental(self, text):
         query_str = text.strip()
