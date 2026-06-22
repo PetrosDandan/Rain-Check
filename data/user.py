@@ -1,4 +1,5 @@
 import sqlite3
+import re
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QFrame, QDialog
@@ -95,11 +96,15 @@ class UsersTab(QWidget):
         table_lbl.setStyleSheet("color: #111827; font-weight: bold; font-size: 11px; letter-spacing: 0.5px; margin-top: 5px;")
         layout.addWidget(table_lbl)
 
-        # Users Table
+        # Users Table (Expanded to 6 columns for Action Buttons)
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Student / User ID", "First Name", "Last Name", "M.I.", "RFID UID"])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["Student / User ID", "First Name", "Last Name", "M.I.", "RFID UID", "Actions"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        # Give the action column a fixed size so it stays compact
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(5, 100)
+        
         self.table.setStyleSheet("""
             QTableWidget {
                 background-color: #ffffff;
@@ -149,26 +154,105 @@ class UsersTab(QWidget):
                         if col_idx == 0:
                             item.setForeground(QColor("#11224d"))
                     self.table.setItem(idx, col_idx, item)
+                
+                # --- ACTIONS Widget (Edit/Delete buttons nicely grouped like the inventory tab) ---
+                actions_widget = QWidget()
+                actions_layout = QHBoxLayout(actions_widget)
+                actions_layout.setContentsMargins(6, 2, 6, 2)
+                actions_layout.setSpacing(10)
+                actions_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                
+                # Green Tinted Edit Button
+                edit_btn = QPushButton("✏ Edit")
+                edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                edit_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #ecfdf5;
+                        color: #047857;
+                        border: 1px solid #a7f3d0;
+                        border-radius: 4px;
+                        font-size: 10px;
+                        padding: 3px 8px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: #34d399;
+                        color: #ffffff;
+                    }
+                """)
+                edit_btn.clicked.connect(lambda checked, r=row: self.edit_student(r))
+                
+                # Red Tinted Delete Button
+                del_btn = QPushButton("🗑 Delete")
+                del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                del_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #fef2f2;
+                        color: #b91c1c;
+                        border: 1px solid #fecaca;
+                        border-radius: 4px;
+                        font-size: 10px;
+                        padding: 3px 8px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: #ef4444;
+                        color: #ffffff;
+                    }
+                """)
+                del_btn.clicked.connect(lambda checked, uid=row[0]: self.delete_student(uid))
+                
+                actions_layout.addWidget(edit_btn)
+                actions_layout.addWidget(del_btn)
+                
+                # Places it in column index 5 (the "Actions" header column)
+                self.table.setCellWidget(idx, 5, actions_widget)
+                
         except Exception as e:
             QMessageBox.critical(self, "Database Error", f"Failed to retrieve user registry: {e}")
 
     def add_student(self):
-        dialog = StudentRegistrationDialog(self.db_path, self)
+        dialog = StudentRegistrationDialog(self.db_path, parent=self)
         if dialog.exec():
             self.load_users()
 
+    def edit_student(self, user_data):
+        # Open dialog in edit mode passing the existing row tuple data
+        dialog = StudentRegistrationDialog(self.db_path, edit_user_data=user_data, parent=self)
+        if dialog.exec():
+            self.load_users()
+
+    def delete_student(self, user_id):
+        confirm = QMessageBox.question(
+            self, "Confirm Deletion",
+            f"Are you sure you want to permanently delete Student ID {user_id} from the system database?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM USER WHERE user_id = ?", (user_id,))
+                conn.commit()
+                conn.close()
+                self.load_users()
+            except Exception as e:
+                QMessageBox.critical(self, "Database Error", f"Failed to remove user: {e}")
+
 
 class StudentRegistrationDialog(QDialog):
-    """Custom registration dialog matching the high-fidelity UI design mockup.
-    Includes active RFID Card scanning simulator that reacts immediately on click!"""
-    def __init__(self, db_path, parent=None):
+    """Custom registration dialog supporting both creation and non-RFID modification modes."""
+    def __init__(self, db_path, edit_user_data=None, parent=None):
         super().__init__(parent)
         self.db_path = db_path
-        self.rfid_uid = ""  # Start empty to wait for simulated scan
+        self.edit_user_data = edit_user_data # Tuple structure if editing: (user_id, first_name, last_name, m_i, rfid_uid)
+        self.is_edit_mode = edit_user_data is not None
+        self.rfid_uid = edit_user_data[4] if self.is_edit_mode else ""
         self.init_ui()
         
     def init_ui(self):
-        self.setWindowTitle("Register New Student")
+        self.setWindowTitle("Edit Student Profile" if self.is_edit_mode else "Register New Student")
         self.setFixedWidth(460)
         self.setStyleSheet("""
             QDialog {
@@ -176,7 +260,6 @@ class StudentRegistrationDialog(QDialog):
             }
         """)
         
-        # Main frameless-like layout
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
@@ -193,7 +276,6 @@ class StudentRegistrationDialog(QDialog):
         header_layout.setContentsMargins(20, 18, 20, 18)
         header_layout.setSpacing(14)
         
-        # Yellow profile/user icon badge
         icon_badge = QLabel()
         icon_badge.setFixedSize(44, 44)
         icon_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -209,12 +291,11 @@ class StudentRegistrationDialog(QDialog):
         """)
         icon_badge.setText("👤")
         
-        # Title Label Layout
         title_layout = QVBoxLayout()
         title_layout.setSpacing(2)
         title_layout.setContentsMargins(0, 0, 0, 0)
         
-        title_lbl = QLabel("Register new student")
+        title_lbl = QLabel("Edit student profile" if self.is_edit_mode else "Register new student")
         title_lbl.setStyleSheet("""
             QLabel {
                 color: #ffffff;
@@ -239,17 +320,11 @@ class StudentRegistrationDialog(QDialog):
         header_layout.addWidget(icon_badge)
         header_layout.addLayout(title_layout)
         header_layout.addStretch()
-        
         main_layout.addWidget(header_frame)
         
         # --- BODY FORM WRAPPER ---
         body_frame = QFrame()
-        body_frame.setStyleSheet("""
-            QFrame {
-                background-color: #ffffff;
-                border: none;
-            }
-        """)
+        body_frame.setStyleSheet("QFrame { background-color: #ffffff; border: none; }")
         body_layout = QVBoxLayout(body_frame)
         body_layout.setContentsMargins(24, 24, 24, 24)
         body_layout.setSpacing(18)
@@ -258,14 +333,8 @@ class StudentRegistrationDialog(QDialog):
         id_layout = QVBoxLayout()
         id_layout.setSpacing(6)
         id_lbl = QLabel("STUDENT ID")
-        id_lbl.setStyleSheet("""
-            QLabel {
-                color: #6b7280;
-                font-size: 10px;
-                font-weight: bold;
-                letter-spacing: 0.8px;
-            }
-        """)
+        id_lbl.setStyleSheet("QLabel { color: #6b7280; font-size: 10px; font-weight: bold; letter-spacing: 0.8px; }")
+        
         self.id_input = QLineEdit()
         self.id_input.setPlaceholderText("e.g. 2021-0008")
         self.id_input.setStyleSheet("""
@@ -277,10 +346,13 @@ class StudentRegistrationDialog(QDialog):
                 padding: 10px 12px;
                 font-size: 13px;
             }
-            QLineEdit:focus {
-                border: 2px solid #11224d;
-            }
+            QLineEdit:focus { border: 2px solid #11224d; }
+            QLineEdit:disabled { background-color: #f3f4f6; color: #6b7280; }
         """)
+        if self.is_edit_mode:
+            self.id_input.setText(self.edit_user_data[0])
+            self.id_input.setEnabled(False)  # Lock primary key ID modification during alterations
+            
         id_layout.addWidget(id_lbl)
         id_layout.addWidget(self.id_input)
         body_layout.addLayout(id_layout)
@@ -293,29 +365,12 @@ class StudentRegistrationDialog(QDialog):
         fn_layout = QVBoxLayout()
         fn_layout.setSpacing(6)
         fn_lbl = QLabel("FIRST NAME")
-        fn_lbl.setStyleSheet("""
-            QLabel {
-                color: #6b7280;
-                font-size: 10px;
-                font-weight: bold;
-                letter-spacing: 0.8px;
-            }
-        """)
+        fn_lbl.setStyleSheet("QLabel { color: #6b7280; font-size: 10px; font-weight: bold; letter-spacing: 0.8px; }")
         self.fn_input = QLineEdit()
         self.fn_input.setPlaceholderText("Maria")
-        self.fn_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #ffffff;
-                color: #111827;
-                border: 1px solid #d1d5db;
-                border-radius: 6px;
-                padding: 10px 12px;
-                font-size: 13px;
-            }
-            QLineEdit:focus {
-                border: 2px solid #11224d;
-            }
-        """)
+        self.fn_input.setStyleSheet("QLineEdit { background-color: #ffffff; color: #111827; border: 1px solid #d1d5db; border-radius: 6px; padding: 10px 12px; font-size: 13px; } QLineEdit:focus { border: 2px solid #11224d; }")
+        if self.is_edit_mode:
+            self.fn_input.setText(self.edit_user_data[1])
         fn_layout.addWidget(fn_lbl)
         fn_layout.addWidget(self.fn_input)
         
@@ -323,29 +378,12 @@ class StudentRegistrationDialog(QDialog):
         ln_layout = QVBoxLayout()
         ln_layout.setSpacing(6)
         ln_lbl = QLabel("LAST NAME")
-        ln_lbl.setStyleSheet("""
-            QLabel {
-                color: #6b7280;
-                font-size: 10px;
-                font-weight: bold;
-                letter-spacing: 0.8px;
-            }
-        """)
+        ln_lbl.setStyleSheet("QLabel { color: #6b7280; font-size: 10px; font-weight: bold; letter-spacing: 0.8px; }")
         self.ln_input = QLineEdit()
         self.ln_input.setPlaceholderText("Reyes")
-        self.ln_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #ffffff;
-                color: #111827;
-                border: 1px solid #d1d5db;
-                border-radius: 6px;
-                padding: 10px 12px;
-                font-size: 13px;
-            }
-            QLineEdit:focus {
-                border: 2px solid #11224d;
-            }
-        """)
+        self.ln_input.setStyleSheet("QLineEdit { background-color: #ffffff; color: #111827; border: 1px solid #d1d5db; border-radius: 6px; padding: 10px 12px; font-size: 13px; } QLineEdit:focus { border: 2px solid #11224d; }")
+        if self.is_edit_mode:
+            self.ln_input.setText(self.edit_user_data[2])
         ln_layout.addWidget(ln_lbl)
         ln_layout.addWidget(self.ln_input)
         
@@ -353,29 +391,12 @@ class StudentRegistrationDialog(QDialog):
         mi_layout = QVBoxLayout()
         mi_layout.setSpacing(6)
         mi_lbl = QLabel("MIDDLE INITIAL")
-        mi_lbl.setStyleSheet("""
-            QLabel {
-                color: #6b7280;
-                font-size: 10px;
-                font-weight: bold;
-                letter-spacing: 0.8px;
-            }
-        """)
+        mi_lbl.setStyleSheet("QLabel { color: #6b7280; font-size: 10px; font-weight: bold; letter-spacing: 0.8px; }")
         self.mi_input = QLineEdit()
         self.mi_input.setPlaceholderText("C.")
-        self.mi_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #ffffff;
-                color: #111827;
-                border: 1px solid #d1d5db;
-                border-radius: 6px;
-                padding: 10px 12px;
-                font-size: 13px;
-            }
-            QLineEdit:focus {
-                border: 2px solid #11224d;
-            }
-        """)
+        self.mi_input.setStyleSheet("QLineEdit { background-color: #ffffff; color: #111827; border: 1px solid #d1d5db; border-radius: 6px; padding: 10px 12px; font-size: 13px; } QLineEdit:focus { border: 2px solid #11224d; }")
+        if self.is_edit_mode and self.edit_user_data[3]:
+            self.mi_input.setText(self.edit_user_data[3])
         mi_layout.addWidget(mi_lbl)
         mi_layout.addWidget(self.mi_input)
         
@@ -384,7 +405,7 @@ class StudentRegistrationDialog(QDialog):
         names_layout.addLayout(mi_layout, 2)
         body_layout.addLayout(names_layout)
         
-        # 3. Interactive RFID Card Enrollment Container
+        # 3. Interactive RFID Card Enrollment Container (HIDDEN IN EDIT MODE)
         self.rfid_container = QFrame()
         self.rfid_container.setCursor(Qt.CursorShape.PointingHandCursor)
         self.rfid_container.setObjectName("RfidContainer")
@@ -393,46 +414,33 @@ class StudentRegistrationDialog(QDialog):
         rfid_layout.setContentsMargins(18, 16, 18, 16)
         rfid_layout.setSpacing(12)
         
-        # Dotted signal label
         self.signal_lbl = QLabel()
         self.signal_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.signal_lbl.setStyleSheet("font-weight: bold; font-size: 11px; letter-spacing: 0.8px; word-spacing: 1px;")
-        
         inner_content_layout = QHBoxLayout()
         inner_content_layout.setSpacing(14)
-        
-        # Card badge graphic
         self.card_icon_badge = QLabel()
         self.card_icon_badge.setFixedSize(40, 40)
         self.card_icon_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        # Texts layouts
         text_layout = QVBoxLayout()
         text_layout.setSpacing(2)
-        
         self.action_title_lbl = QLabel()
-        self.action_title_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
-        
         self.action_desc_lbl = QLabel()
-        self.action_desc_lbl.setStyleSheet("font-size: 11px;")
-        
         text_layout.addWidget(self.action_title_lbl)
         text_layout.addWidget(self.action_desc_lbl)
         
         inner_content_layout.addWidget(self.card_icon_badge)
         inner_content_layout.addLayout(text_layout)
         inner_content_layout.addStretch()
-        
         rfid_layout.addWidget(self.signal_lbl)
         rfid_layout.addLayout(inner_content_layout)
-        
         body_layout.addWidget(self.rfid_container)
         
-        # Connect clicking the container frame to our RFID tap simulation handler!
         self.rfid_container.mousePressEvent = self.simulate_rfid_scan
-        
-        # Set up default blue visual state
         self.update_rfid_ui()
+        
+        if self.is_edit_mode:
+            self.rfid_container.hide() # Directly hide the RFID layout row if editing profile details
         
         # 4. Action Buttons row
         buttons_layout = QHBoxLayout()
@@ -441,40 +449,12 @@ class StudentRegistrationDialog(QDialog):
         
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #ffffff;
-                color: #11224d;
-                border: 1px solid #11224d;
-                border-radius: 6px;
-                padding: 10px 24px;
-                font-weight: bold;
-                font-size: 13px;
-                min-width: 80px;
-            }
-            QPushButton:hover {
-                background-color: #f3f4f6;
-            }
-        """)
+        self.cancel_btn.setStyleSheet("QPushButton { background-color: #ffffff; color: #11224d; border: 1px solid #11224d; border-radius: 6px; padding: 10px 24px; font-weight: bold; font-size: 13px; min-width: 80px; } QPushButton:hover { background-color: #f3f4f6; }")
         self.cancel_btn.clicked.connect(self.reject)
         
         self.save_btn = QPushButton("💾 Save")
         self.save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.save_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #11224d;
-                color: #ffffff;
-                border: none;
-                border-radius: 6px;
-                padding: 10px 24px;
-                font-weight: bold;
-                font-size: 13px;
-                min-width: 100px;
-            }
-            QPushButton:hover {
-                background-color: #1c326b;
-            }
-        """)
+        self.save_btn.setStyleSheet("QPushButton { background-color: #11224d; color: #ffffff; border: none; border-radius: 6px; padding: 10px 24px; font-weight: bold; font-size: 13px; min-width: 100px; } QPushButton:hover { background-color: #1c326b; }")
         self.save_btn.clicked.connect(self.save)
         
         buttons_layout.addWidget(self.cancel_btn)
@@ -484,150 +464,105 @@ class StudentRegistrationDialog(QDialog):
         main_layout.addWidget(body_frame)
 
     def update_rfid_ui(self):
-        """Updates the interactive card scanner box using exact visual themes from the spec images."""
         if not self.rfid_uid:
-            # Tap reader default blue status
-            self.rfid_container.setStyleSheet("""
-                QFrame#RfidContainer {
-                    background-color: #eff6ff;
-                    border: 2px dashed #3b82f6;
-                    border-radius: 8px;
-                }
-            """)
-            self.signal_lbl.setText("📶 RFID CARD ENROLLMENT")
+            self.rfid_container.setStyleSheet("QFrame#RfidContainer { background-color: #eff6ff; border: 2px dashed #3b82f6; border-radius: 8px; }")
+            self.signal_lbl.setText("RFID CARD ENROLLMENT")
             self.signal_lbl.setStyleSheet("color: #2563eb; font-weight: bold; font-size: 11px;")
-            
-            self.card_icon_badge.setStyleSheet("""
-                QLabel {
-                    background-color: #dbeafe;
-                    color: #2563eb;
-                    font-size: 20px;
-                    border-radius: 6px;
-                    border: none;
-                }
-            """)
+            self.card_icon_badge.setStyleSheet("QLabel { background-color: #dbeafe; color: #2563eb; font-size: 20px; border-radius: 6px; border: none; }")
             self.card_icon_badge.setText("💳")
-            
             self.action_title_lbl.setText("Tap ID card on scanner now")
             self.action_title_lbl.setStyleSheet("color: #1e40af; font-weight: bold; font-size: 13px;")
             self.action_desc_lbl.setText("Hold card flat against the reader until confirmed")
             self.action_desc_lbl.setStyleSheet("color: #3b82f6; font-size: 11px;")
         else:
-            # Captured state: success green highlight
-            self.rfid_container.setStyleSheet("""
-                QFrame#RfidContainer {
-                    background-color: #ecfdf5;
-                    border: 2px dashed #10b981;
-                    border-radius: 8px;
-                }
-            """)
-            self.signal_lbl.setText("📶 CARD READ SUCCESSFULLY")
+            self.rfid_container.setStyleSheet("QFrame#RfidContainer { background-color: #ecfdf5; border: 2px dashed #10b981; border-radius: 8px; }")
+            self.signal_lbl.setText("CARD READ SUCCESSFULLY")
             self.signal_lbl.setStyleSheet("color: #059669; font-weight: bold; font-size: 11px;")
-            
-            self.card_icon_badge.setStyleSheet("""
-                QLabel {
-                    background-color: #d1fae5;
-                    color: #059669;
-                    font-size: 20px;
-                    border-radius: 6px;
-                    border: none;
-                }
-            """)
+            self.card_icon_badge.setStyleSheet("QLabel { background-color: #d1fae5; color: #059669; font-size: 20px; border-radius: 6px; border: none; }")
             self.card_icon_badge.setText("💳")
-            
             self.action_title_lbl.setText("Card detected - UID captured")
             self.action_title_lbl.setStyleSheet("color: #065f46; font-weight: bold; font-size: 13px;")
             self.action_desc_lbl.setText(f"RFID UID linked: {self.rfid_uid}")
             self.action_desc_lbl.setStyleSheet("color: #059669; font-size: 11px;")
 
     def simulate_rfid_scan(self, event):
-        """Simulate a physical RFID scan card tag instantly on mouse click on the container frame."""
         import random
         bytes_array = [f"{random.randint(0, 255):02X}" for _ in range(4)]
         self.rfid_uid = "-".join(bytes_array)
         self.update_rfid_ui()
 
     def save(self):
-        import re  # Ensure re is available for regex checks
-        
         uid = self.id_input.text().strip()
         fn = self.fn_input.text().strip()
         ln = self.ln_input.text().strip()
         mi = self.mi_input.text().strip()
         
-        # --- 1. STUDENT ID FORMAT VALIDATION ---
-        # Matches format: digits-digits
-        id_match = re.match(r"^(\d+)-(\d+)$", uid)
-        if not id_match:
-            QMessageBox.warning(self, "Validation Error", "Please provide a valid Student ID in YYYY-XXXX format (e.g., 2021-0008).")
-            return
-            
-        year_val = int(id_match.group(1))
-        num_val = int(id_match.group(2))
-        
-        if not (2021 <= year_val <= 2026) or not (1 <= num_val <= 3000):
-            QMessageBox.warning(self, "Validation Error", "Student ID constraints violated:\n- Year part must be between 2021 and 2026.\n- Id part must be between 0001 and 3000.")
-            return
-            
-        # Reformat ID uniformly (ensuring the sequence number is 4-digit padded, e.g., 2021-0005)
-        uid = f"{year_val}-{num_val:04d}"
+        # --- 1. STUDENT ID RANGE VALIDATIONS (Skip checks if in edit mode since ID is locked) ---
+        if not self.is_edit_mode:
+            id_match = re.match(r"^(\d+)-(\d+)$", uid)
+            if not id_match:
+                QMessageBox.warning(self, "Validation Error", "Please provide a valid Student ID in YYYY-XXXX format (e.g., 2021-0008).")
+                return
+            year_val = int(id_match.group(1))
+            num_val = int(id_match.group(2))
+            if not (2021 <= year_val <= 2026) or not (1 <= num_val <= 3000):
+                QMessageBox.warning(self, "Validation Error", "Student ID constraints violated:\n- Year part must be between 2021 and 2026.\n- Id part must be between 0001 and 3000.")
+                return
+            uid = f"{year_val}-{num_val:04d}"
 
-        # --- 2. FIRST & LAST NAME VALIDATION & AUTO-CASE ---
-        if not fn or not fn.isalpha():
-            QMessageBox.warning(self, "Validation Error", "First Name is required and must only contain English alphabet letters.")
+        # --- 2. NAMES VALIDATION & AUTO-CASE ---
+        if not fn or not fn.replace(" ", "").isalpha():
+            QMessageBox.warning(self, "Validation Error", "First Name is required and must only contain alphabet letters.")
             return
-        if not ln or not ln.isalpha():
-            QMessageBox.warning(self, "Validation Error", "Last Name is required and must only contain English alphabet letters.")
+        if not ln or not ln.replace(" ", "").isalpha():
+            QMessageBox.warning(self, "Validation Error", "Last Name is required and must only contain alphabet letters.")
             return
             
-        # Auto uppercase the first letter and lowercase the rest (e.g. jOHN -> John)
         fn = fn.capitalize()
         ln = ln.capitalize()
 
-        # --- 3. MIDDLE INITIAL VALIDATION & AUTO-CASE ---
+        # --- 3. MIDDLE INITIAL AUTO-CASE ---
         if mi:
-            # Clean off any trailing period the user might have manually typed to test the raw letter
             mi_clean = mi.rstrip('.')
             if len(mi_clean) != 1 or not mi_clean.isalpha():
-                QMessageBox.warning(self, "Validation Error", "Middle Initial must be a single English alphabet letter or left blank.")
+                QMessageBox.warning(self, "Validation Error", "Middle Initial must be a single letter or left blank.")
                 return
-            # Automatically uppercase and attach a period next to it
             mi = mi_clean.upper() + "."
         else:
             mi = ""
-
-        # --- 4. RFID ENROLLMENT CHECK ---
-        if not self.rfid_uid:
-            QMessageBox.warning(self, "RFID Scanning Needed", "Please tap the card scanner simulation workspace block to capture the RFID UID.")
-            return
             
-        # --- 5. UNIQUE CHECKS & DATABASE OPERATIONS ---
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # STOPS INPUT IF ID IS NOT UNIQUE
-            cursor.execute("SELECT user_id FROM USER WHERE user_id = ?", (uid,))
-            if cursor.fetchone():
-                QMessageBox.warning(self, "Duplicate Student ID", f"Registration Failed. The Student ID '{uid}' is already assigned to an existing user in the database.")
-                conn.close()
-                return
+            if self.is_edit_mode:
+                # Update details for an existing user row
+                cursor.execute("""
+                    UPDATE USER 
+                    SET first_name = ?, last_name = ?, m_i = ? 
+                    WHERE user_id = ?
+                """, (fn, ln, mi, uid))
+            else:
+                # Unique constraints checks for an addition creation workflow
+                cursor.execute("SELECT user_id FROM USER WHERE user_id = ?", (uid,))
+                if cursor.fetchone():
+                    QMessageBox.warning(self, "Duplicate Student ID", f"The Student ID '{uid}' is already registered.")
+                    conn.close()
+                    return
+                    
+                cursor.execute("SELECT user_id FROM USER WHERE rfid_uid = ?", (self.rfid_uid,))
+                if cursor.fetchone():
+                    QMessageBox.warning(self, "Duplicate RFID", "The scanned RFID tag is already enrolled.")
+                    conn.close()
+                    return
+                    
+                cursor.execute("""
+                    INSERT INTO USER (user_id, first_name, last_name, m_i, rfid_uid)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (uid, fn, ln, mi, self.rfid_uid))
                 
-            # STOPS INPUT IF RFID TAG IS NOT UNIQUE
-            cursor.execute("SELECT user_id FROM USER WHERE rfid_uid = ?", (self.rfid_uid,))
-            duplicate = cursor.fetchone()
-            if duplicate:
-                QMessageBox.warning(self, "Duplicate RFID", f"The scanned RFID tag is already linked to Student ID: {duplicate[0]}. Please tap the reader workspace again to generate a unique scan.")
-                conn.close()
-                return
-            
-            # If everything is unique and valid, append to database
-            cursor.execute("""
-                INSERT INTO USER (user_id, first_name, last_name, m_i, rfid_uid)
-                VALUES (?, ?, ?, ?, ?)
-            """, (uid, fn, ln, mi, self.rfid_uid))
             conn.commit()
             conn.close()
             self.accept()
         except Exception as e:
-            QMessageBox.critical(self, "Database Error", f"Failed to save student registry entry: {e}")
+            QMessageBox.critical(self, "Database Error", f"Failed to save record: {e}")
