@@ -149,7 +149,7 @@ def init_database():
             "Macalisang", "Actub", "Lluch"
         ]
         generated_ids = set()
-        while len(generated_ids) < 50:
+        while len(generated_ids) < 1000:
             year = random.randint(2021, 2026)
             suffix = random.randint(1, 2999)
             generated_ids.add(f"{year}-{suffix:04d}")
@@ -158,7 +158,10 @@ def init_database():
             fname = random.choice(first_names)
             lname = random.choice(last_names)
             mi = chr(random.randint(65, 90))
-            rfid = f"RFID-{random.randint(100000, 999999)}"
+            
+            # Generates the clean 4-byte uppercase Hexadecimal string (e.g. A1-B2-C3-D4)
+            rfid = "-".join([f"{random.randint(0, 255):02X}" for _ in range(4)])
+            
             cursor.execute(
                 "INSERT INTO USER (user_id, first_name, last_name, m_i, rfid_uid) VALUES (?, ?, ?, ?, ?)",
                 (uid, fname, lname, mi, rfid)
