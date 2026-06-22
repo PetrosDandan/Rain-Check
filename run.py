@@ -1917,7 +1917,7 @@ class RaincheckMainWindow(QMainWindow):
     """The main administrative portal containing the left solid-navy menu and the right page rendering panes."""
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("UniRent - University's Umbrella Rental System")
+        self.setWindowTitle("Raincheck - University's Umbrella Rental System")
         self.setMinimumSize(980, 640)
         
         # Central horizontal viewport
@@ -1961,7 +1961,7 @@ class RaincheckMainWindow(QMainWindow):
         title_box.setSpacing(2)
         title_box.setContentsMargins(0, 0, 0, 0)
         
-        ubrand_lbl = QLabel("UniRent")
+        ubrand_lbl = QLabel("Raincheck")
         ubrand_lbl.setStyleSheet("color: #ffffff; font-weight: bold; font-size: 19px; font-family: 'Segoe UI', Arial, sans-serif;")
         
         usub_lbl = QLabel("University's Umbrella\nRental System")
