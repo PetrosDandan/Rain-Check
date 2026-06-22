@@ -444,7 +444,7 @@ class UmbrellasTab(QWidget):
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT u.first_name || ' ' || u.last_name 
-                FROM rents r 
+                FROM RENTAL r 
                 JOIN USER u ON r.user_id = u.user_id 
                 WHERE r.umbrella_id = ? 
                 ORDER BY r.rent_date DESC 
@@ -714,12 +714,34 @@ class UmbrellasTab(QWidget):
         dialog.exec()
 
     def delete_umbrella(self, umb_id):
-        rep = QMessageBox.question(
-            self, "Delete Umbrella", 
-            f"Are you sure you want to delete umbrella {umb_id}?", 
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if rep == QMessageBox.StandardButton.Yes:
+        # Check if currently active / rented out
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT current_status FROM Umbrella WHERE umbrella_id = ?", (umb_id,))
+            status_res = cursor.fetchone()
+            cursor.execute("SELECT COUNT(*) FROM RENTAL WHERE umbrella_id = ? AND return_date IS NULL", (umb_id,))
+            active_count = cursor.fetchone()[0]
+            conn.close()
+            
+            is_rented = False
+            if status_res and status_res[0].lower() in ["rented", "rented out"]:
+                is_rented = True
+            if active_count > 0:
+                is_rented = True
+                
+            if is_rented:
+                from data.success_dialogs import CannotDeleteUmbrellaDialog
+                dlg = CannotDeleteUmbrellaDialog(umb_id, self)
+                dlg.exec()
+                return
+        except Exception as e:
+            print(f"Error checking active rent status during deletion: {e}")
+
+        from data.success_dialogs import DeleteUmbrellaDialog
+        from PyQt6.QtWidgets import QDialog
+        dlg = DeleteUmbrellaDialog(umb_id, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             try:
                 conn = sqlite3.connect(self.db_path)
                 cursor = conn.cursor()

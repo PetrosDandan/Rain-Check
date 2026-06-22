@@ -97,8 +97,8 @@ class UsersTab(QWidget):
 
         # Users Table
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Student / User ID", "First Name", "Last Name", "M.I.", "RFID UID"])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["Student / User ID", "First Name", "Last Name", "M.I.", "RFID UID", "Actions"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setStyleSheet("""
             QTableWidget {
@@ -141,6 +141,7 @@ class UsersTab(QWidget):
             self.table.setRowCount(0)
             for idx, row in enumerate(rows):
                 self.table.insertRow(idx)
+                user_id = row[0]
                 for col_idx, val in enumerate(row):
                     item = QTableWidgetItem(str(val) if val else "")
                     item.setFlags(item.flags() ^ Qt.ItemFlag.ItemIsEditable)
@@ -149,8 +150,74 @@ class UsersTab(QWidget):
                         if col_idx == 0:
                             item.setForeground(QColor("#11224d"))
                     self.table.setItem(idx, col_idx, item)
+                
+                # Delete action column
+                actions_widget = QWidget()
+                actions_layout = QHBoxLayout(actions_widget)
+                actions_layout.setContentsMargins(6, 2, 6, 2)
+                actions_layout.setSpacing(10)
+                actions_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                
+                del_btn = QPushButton("🗑 Delete")
+                del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                del_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #fef2f2;
+                        color: #b91c1c;
+                        border: 1px solid #fecaca;
+                        border-radius: 4px;
+                        font-size: 10px;
+                        padding: 3px 8px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: #ef4444;
+                        color: #ffffff;
+                    }
+                """)
+                del_btn.clicked.connect(lambda checked, u=user_id: self.delete_user(u))
+                actions_layout.addWidget(del_btn)
+                
+                self.table.setCellWidget(idx, 5, actions_widget)
         except Exception as e:
             QMessageBox.critical(self, "Database Error", f"Failed to retrieve user registry: {e}")
+
+    def delete_user(self, user_id):
+        # Check if currently active checkers / rentals exist for this user in RENTAL table
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM RENTAL WHERE user_id = ? AND return_date IS NULL", (user_id,))
+            active_count = cursor.fetchone()[0]
+            conn.close()
+            
+            if active_count > 0:
+                from data.success_dialogs import CannotDeleteUserDialog
+                dlg = CannotDeleteUserDialog(user_id, self)
+                dlg.exec()
+                return
+        except Exception as e:
+            print(f"Error checking active rent status for user deletion: {e}")
+
+        # Show Delete User Dialog
+        from data.success_dialogs import DeleteUserDialog
+        dlg = DeleteUserDialog(user_id, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            try:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM USER WHERE user_id = ?", (user_id,))
+                conn.commit()
+                conn.close()
+                
+                # Refresh dashboard stats
+                main_win = self.window()
+                if main_win and hasattr(main_win, "refresh_stats"):
+                    main_win.refresh_stats()
+                    
+                self.load_users()
+            except Exception as e:
+                QMessageBox.critical(self, "Database Error", f"Failed to delete user: {e}")
 
     def add_student(self):
         dialog = QDialog(self)
