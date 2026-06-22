@@ -102,8 +102,12 @@ class UsersTab(QWidget):
         self.table.setHorizontalHeaderLabels(["Student / User ID", "First Name", "Last Name", "M.I.", "RFID UID", "Actions"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         # Give the action column a fixed size so it stays compact
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(3, 50)  # Shrinks M.I. down to only 50 pixels wide
+        
+        # 3. Secure clean spacing for the inventory style Action buttons (index 5)
         self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(5, 100)
+        self.table.setColumnWidth(5, 140)
         
         self.table.setStyleSheet("""
             QTableWidget {
