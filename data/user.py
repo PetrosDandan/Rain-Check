@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QFrame, QDialog
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor, QFont, QCursor
 
 def add_subtle_shadow(widget):
     import PyQt6.QtWidgets as QW
@@ -21,6 +21,11 @@ class UsersTab(QWidget):
     def __init__(self, db_path, parent=None):
         super().__init__(parent)
         self.db_path = db_path
+        
+        # --- PAGINATION PROPERTIES ---
+        self.current_page = 1
+        self.items_per_page = 100
+        
         self.init_ui()
 
     def init_ui(self):
@@ -65,7 +70,8 @@ class UsersTab(QWidget):
                 border: 1px solid #11224d;
             }
         """)
-        self.search_input.textChanged.connect(self.load_users)
+        # Reset to page 1 whenever search filters alter
+        self.search_input.textChanged.connect(self.reset_and_load)
 
         # Add Student Button
         self.add_btn = QPushButton("Register New Student")
@@ -96,18 +102,16 @@ class UsersTab(QWidget):
         table_lbl.setStyleSheet("color: #111827; font-weight: bold; font-size: 11px; letter-spacing: 0.5px; margin-top: 5px;")
         layout.addWidget(table_lbl)
 
-        # Users Table (Expanded to 6 columns for Action Buttons)
+        # Users Table
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(["Student / User ID", "First Name", "Last Name", "M.I.", "RFID UID", "Actions"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        # Give the action column a fixed size so it stays compact
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(3, 50)  # Shrinks M.I. down to only 50 pixels wide
         
-        # 3. Secure clean spacing for the inventory style Action buttons (index 5)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(3, 50)  # Shrunk M.I.
         self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(5, 140)
+        self.table.setColumnWidth(5, 140) # Extra action width
         
         self.table.setStyleSheet("""
             QTableWidget {
@@ -128,25 +132,130 @@ class UsersTab(QWidget):
             }
         """)
         layout.addWidget(self.table)
+
+        # --- PAGINATION FOOTER BUTTONS CONTROLS PANEL ---
+        pagination_card = QFrame()
+        pagination_card.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+            }
+        """)
+        pagination_layout = QHBoxLayout(pagination_card)
+        pagination_layout.setContentsMargins(12, 6, 12, 6)
+        
+        self.prev_btn = QPushButton("◀ Previous")
+        self.prev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.prev_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ffffff;
+                color: #374151;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                padding: 5px 12px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #f9fafb; }
+            QPushButton:disabled { color: #9ca3af; background-color: #f3f4f6; border-color: #e5e7eb; }
+        """)
+        self.prev_btn.clicked.connect(self.prev_page)
+        
+        self.page_lbl = QLabel("Page 1 of 1")
+        self.page_lbl.setStyleSheet("color: #4b5563; font-size: 11px; font-weight: bold;")
+        self.page_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.next_btn = QPushButton("Next ▶")
+        self.next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.next_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ffffff;
+                color: #374151;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                padding: 5px 12px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #f9fafb; }
+            QPushButton:disabled { color: #9ca3af; background-color: #f3f4f6; border-color: #e5e7eb; }
+        """)
+        self.next_btn.clicked.connect(self.next_page)
+        
+        pagination_layout.addWidget(self.prev_btn)
+        pagination_layout.addStretch()
+        pagination_layout.addWidget(self.page_lbl)
+        pagination_layout.addStretch()
+        pagination_layout.addWidget(self.next_btn)
+        
+        layout.addWidget(pagination_card)
+        self.load_users()
+
+    def reset_and_load(self):
+        self.current_page = 1
+        self.load_users()
+
+    def prev_page(self):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.load_users()
+
+    def next_page(self):
+        self.current_page += 1
         self.load_users()
 
     def load_users(self):
         query_str = self.search_input.text().strip()
+        offset = (self.current_page - 1) * self.items_per_page
+        
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
+            
+            # 1. First, fetch total matched counts to configure navigation bounds
+            if query_str:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM USER 
+                    WHERE user_id LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR rfid_uid LIKE ?
+                """, (f"%{query_str}%", f"%{query_str}%", f"%{query_str}%", f"%{query_str}%"))
+            else:
+                cursor.execute("SELECT COUNT(*) FROM USER")
+            
+            total_records = cursor.fetchone()[0]
+            total_pages = max(1, (total_records + self.items_per_page - 1) // self.items_per_page)
+            
+            # Guard window check bounds
+            if self.current_page > total_pages:
+                self.current_page = total_pages
+                offset = (self.current_page - 1) * self.items_per_page
+
+            # 2. Extract paginated rows segment via LIMIT and OFFSET
             if query_str:
                 cursor.execute("""
                     SELECT user_id, first_name, last_name, m_i, rfid_uid 
                     FROM USER 
                     WHERE user_id LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR rfid_uid LIKE ?
                     ORDER BY user_id ASC
-                """, (f"%{query_str}%", f"%{query_str}%", f"%{query_str}%", f"%{query_str}%"))
+                    LIMIT ? OFFSET ?
+                """, (f"%{query_str}%", f"%{query_str}%", f"%{query_str}%", f"%{query_str}%", self.items_per_page, offset))
             else:
-                cursor.execute("SELECT user_id, first_name, last_name, m_i, rfid_uid FROM USER ORDER BY user_id ASC")
+                cursor.execute("""
+                    SELECT user_id, first_name, last_name, m_i, rfid_uid 
+                    FROM USER 
+                    ORDER BY user_id ASC 
+                    LIMIT ? OFFSET ?
+                """, (self.items_per_page, offset))
+                
             rows = cursor.fetchall()
             conn.close()
 
+            # 3. Update footer navigation states
+            self.page_lbl.setText(f"Page {self.current_page} of {total_pages} ({total_records} total users)")
+            self.prev_btn.setEnabled(self.current_page > 1)
+            self.next_btn.setEnabled(self.current_page < total_pages)
+
+            # 4. Populating Data Matrix rows
             self.table.setRowCount(0)
             for idx, row in enumerate(rows):
                 self.table.insertRow(idx)
@@ -159,7 +268,7 @@ class UsersTab(QWidget):
                             item.setForeground(QColor("#11224d"))
                     self.table.setItem(idx, col_idx, item)
                 
-                # --- ACTIONS Widget (Edit/Delete buttons nicely grouped like the inventory tab) ---
+                # Dynamic action layouts
                 actions_widget = QWidget()
                 actions_layout = QHBoxLayout(actions_widget)
                 actions_layout.setContentsMargins(6, 2, 6, 2)
@@ -208,8 +317,6 @@ class UsersTab(QWidget):
                 
                 actions_layout.addWidget(edit_btn)
                 actions_layout.addWidget(del_btn)
-                
-                # Places it in column index 5 (the "Actions" header column)
                 self.table.setCellWidget(idx, 5, actions_widget)
                 
         except Exception as e:
@@ -221,7 +328,6 @@ class UsersTab(QWidget):
             self.load_users()
 
     def edit_student(self, user_data):
-        # Open dialog in edit mode passing the existing row tuple data
         dialog = StudentRegistrationDialog(self.db_path, edit_user_data=user_data, parent=self)
         if dialog.exec():
             self.load_users()
@@ -250,7 +356,7 @@ class StudentRegistrationDialog(QDialog):
     def __init__(self, db_path, edit_user_data=None, parent=None):
         super().__init__(parent)
         self.db_path = db_path
-        self.edit_user_data = edit_user_data # Tuple structure if editing: (user_id, first_name, last_name, m_i, rfid_uid)
+        self.edit_user_data = edit_user_data
         self.is_edit_mode = edit_user_data is not None
         self.rfid_uid = edit_user_data[4] if self.is_edit_mode else ""
         self.init_ui()
@@ -258,66 +364,30 @@ class StudentRegistrationDialog(QDialog):
     def init_ui(self):
         self.setWindowTitle("Edit Student Profile" if self.is_edit_mode else "Register New Student")
         self.setFixedWidth(460)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #ffffff;
-            }
-        """)
+        self.setStyleSheet("QDialog { background-color: #ffffff; }")
         
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # --- HEADER CARD PANEL ---
+        # Header layout
         header_frame = QFrame()
-        header_frame.setStyleSheet("""
-            QFrame {
-                background-color: #11224d;
-                border: none;
-            }
-        """)
+        header_frame.setStyleSheet("QFrame { background-color: #11224d; border: none; }")
         header_layout = QHBoxLayout(header_frame)
         header_layout.setContentsMargins(20, 18, 20, 18)
         header_layout.setSpacing(14)
         
-        icon_badge = QLabel()
+        icon_badge = QLabel("👤")
         icon_badge.setFixedSize(44, 44)
         icon_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_badge.setStyleSheet("""
-            QLabel {
-                background-color: #f59e0b;
-                border-radius: 8px;
-                font-size: 22px;
-                color: #ffffff;
-                font-weight: bold;
-                border: none;
-            }
-        """)
-        icon_badge.setText("👤")
+        icon_badge.setStyleSheet("QLabel { background-color: #f59e0b; border-radius: 8px; font-size: 22px; color: #ffffff; font-weight: bold; border: none; }")
         
         title_layout = QVBoxLayout()
         title_layout.setSpacing(2)
-        title_layout.setContentsMargins(0, 0, 0, 0)
-        
         title_lbl = QLabel("Edit student profile" if self.is_edit_mode else "Register new student")
-        title_lbl.setStyleSheet("""
-            QLabel {
-                color: #ffffff;
-                font-size: 16px;
-                font-weight: bold;
-                font-family: 'Segoe UI', Arial, sans-serif;
-            }
-        """)
-        
+        title_lbl.setStyleSheet("QLabel { color: #ffffff; font-size: 16px; font-weight: bold; font-family: 'Segoe UI', Arial, sans-serif; }")
         subtitle_lbl = QLabel("Raincheck | Umbrella Rental System")
-        subtitle_lbl.setStyleSheet("""
-            QLabel {
-                color: #8da2cf;
-                font-size: 11px;
-                font-family: 'Segoe UI', Arial, sans-serif;
-            }
-        """)
-        
+        subtitle_lbl.setStyleSheet("QLabel { color: #8da2cf; font-size: 11px; font-family: 'Segoe UI', Arial, sans-serif; }")
         title_layout.addWidget(title_lbl)
         title_layout.addWidget(subtitle_lbl)
         
@@ -326,46 +396,36 @@ class StudentRegistrationDialog(QDialog):
         header_layout.addStretch()
         main_layout.addWidget(header_frame)
         
-        # --- BODY FORM WRAPPER ---
+        # Form body
         body_frame = QFrame()
         body_frame.setStyleSheet("QFrame { background-color: #ffffff; border: none; }")
         body_layout = QVBoxLayout(body_frame)
         body_layout.setContentsMargins(24, 24, 24, 24)
         body_layout.setSpacing(18)
         
-        # 1. Student ID layout
+        # ID input
         id_layout = QVBoxLayout()
         id_layout.setSpacing(6)
         id_lbl = QLabel("STUDENT ID")
         id_lbl.setStyleSheet("QLabel { color: #6b7280; font-size: 10px; font-weight: bold; letter-spacing: 0.8px; }")
-        
         self.id_input = QLineEdit()
         self.id_input.setPlaceholderText("e.g. 2021-0008")
         self.id_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #ffffff;
-                color: #111827;
-                border: 1px solid #d1d5db;
-                border-radius: 6px;
-                padding: 10px 12px;
-                font-size: 13px;
-            }
+            QLineEdit { background-color: #ffffff; color: #111827; border: 1px solid #d1d5db; border-radius: 6px; padding: 10px 12px; font-size: 13px; }
             QLineEdit:focus { border: 2px solid #11224d; }
             QLineEdit:disabled { background-color: #f3f4f6; color: #6b7280; }
         """)
         if self.is_edit_mode:
             self.id_input.setText(self.edit_user_data[0])
-            self.id_input.setEnabled(False)  # Lock primary key ID modification during alterations
-            
+            self.id_input.setEnabled(False)
         id_layout.addWidget(id_lbl)
         id_layout.addWidget(self.id_input)
         body_layout.addLayout(id_layout)
         
-        # 2. Names row (First Name, Last Name, Middle Initial)
+        # Names group row
         names_layout = QHBoxLayout()
         names_layout.setSpacing(12)
         
-        # First Name
         fn_layout = QVBoxLayout()
         fn_layout.setSpacing(6)
         fn_lbl = QLabel("FIRST NAME")
@@ -378,7 +438,6 @@ class StudentRegistrationDialog(QDialog):
         fn_layout.addWidget(fn_lbl)
         fn_layout.addWidget(self.fn_input)
         
-        # Last Name
         ln_layout = QVBoxLayout()
         ln_layout.setSpacing(6)
         ln_lbl = QLabel("LAST NAME")
@@ -391,7 +450,6 @@ class StudentRegistrationDialog(QDialog):
         ln_layout.addWidget(ln_lbl)
         ln_layout.addWidget(self.ln_input)
         
-        # Middle Initial
         mi_layout = QVBoxLayout()
         mi_layout.setSpacing(6)
         mi_lbl = QLabel("MIDDLE INITIAL")
@@ -409,11 +467,10 @@ class StudentRegistrationDialog(QDialog):
         names_layout.addLayout(mi_layout, 2)
         body_layout.addLayout(names_layout)
         
-        # 3. Interactive RFID Card Enrollment Container (HIDDEN IN EDIT MODE)
+        # RFID Section
         self.rfid_container = QFrame()
         self.rfid_container.setCursor(Qt.CursorShape.PointingHandCursor)
         self.rfid_container.setObjectName("RfidContainer")
-        
         rfid_layout = QVBoxLayout(self.rfid_container)
         rfid_layout.setContentsMargins(18, 16, 18, 16)
         rfid_layout.setSpacing(12)
@@ -444,9 +501,8 @@ class StudentRegistrationDialog(QDialog):
         self.update_rfid_ui()
         
         if self.is_edit_mode:
-            self.rfid_container.hide() # Directly hide the RFID layout row if editing profile details
-        
-        # 4. Action Buttons row
+            self.rfid_container.hide()
+            
         buttons_layout = QHBoxLayout()
         buttons_layout.setSpacing(12)
         buttons_layout.addStretch()
@@ -464,7 +520,6 @@ class StudentRegistrationDialog(QDialog):
         buttons_layout.addWidget(self.cancel_btn)
         buttons_layout.addWidget(self.save_btn)
         body_layout.addLayout(buttons_layout)
-        
         main_layout.addWidget(body_frame)
 
     def update_rfid_ui(self):
@@ -501,7 +556,6 @@ class StudentRegistrationDialog(QDialog):
         ln = self.ln_input.text().strip()
         mi = self.mi_input.text().strip()
         
-        # --- 1. STUDENT ID RANGE VALIDATIONS (Skip checks if in edit mode since ID is locked) ---
         if not self.is_edit_mode:
             id_match = re.match(r"^(\d+)-(\d+)$", uid)
             if not id_match:
@@ -514,7 +568,6 @@ class StudentRegistrationDialog(QDialog):
                 return
             uid = f"{year_val}-{num_val:04d}"
 
-        # --- 2. NAMES VALIDATION & AUTO-CASE ---
         if not fn or not fn.replace(" ", "").isalpha():
             QMessageBox.warning(self, "Validation Error", "First Name is required and must only contain alphabet letters.")
             return
@@ -525,7 +578,6 @@ class StudentRegistrationDialog(QDialog):
         fn = fn.capitalize()
         ln = ln.capitalize()
 
-        # --- 3. MIDDLE INITIAL AUTO-CASE ---
         if mi:
             mi_clean = mi.rstrip('.')
             if len(mi_clean) != 1 or not mi_clean.isalpha():
@@ -540,14 +592,12 @@ class StudentRegistrationDialog(QDialog):
             cursor = conn.cursor()
             
             if self.is_edit_mode:
-                # Update details for an existing user row
                 cursor.execute("""
                     UPDATE USER 
                     SET first_name = ?, last_name = ?, m_i = ? 
                     WHERE user_id = ?
                 """, (fn, ln, mi, uid))
             else:
-                # Unique constraints checks for an addition creation workflow
                 cursor.execute("SELECT user_id FROM USER WHERE user_id = ?", (uid,))
                 if cursor.fetchone():
                     QMessageBox.warning(self, "Duplicate Student ID", f"The Student ID '{uid}' is already registered.")
