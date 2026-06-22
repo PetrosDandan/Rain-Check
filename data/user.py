@@ -548,43 +548,80 @@ class StudentRegistrationDialog(QDialog):
         self.update_rfid_ui()
 
     def save(self):
+        import re  # Ensure re is available for regex checks
+        
         uid = self.id_input.text().strip()
         fn = self.fn_input.text().strip()
         ln = self.ln_input.text().strip()
         mi = self.mi_input.text().strip()
         
-        if not uid:
-            QMessageBox.warning(self, "Validation Error", "Please provide a valid Student ID.")
+        # --- 1. STUDENT ID FORMAT VALIDATION ---
+        # Matches format: digits-digits
+        id_match = re.match(r"^(\d+)-(\d+)$", uid)
+        if not id_match:
+            QMessageBox.warning(self, "Validation Error", "Please provide a valid Student ID in YYYY-XXXX format (e.g., 2021-0008).")
             return
-        if not fn:
-            QMessageBox.warning(self, "Validation Error", "First Name is required.")
+            
+        year_val = int(id_match.group(1))
+        num_val = int(id_match.group(2))
+        
+        if not (2021 <= year_val <= 2026) or not (1 <= num_val <= 3000):
+            QMessageBox.warning(self, "Validation Error", "Student ID constraints violated:\n- Year part must be between 2021 and 2026.\n- Id part must be between 0001 and 3000.")
             return
-        if not ln:
-            QMessageBox.warning(self, "Validation Error", "Last Name is required.")
+            
+        # Reformat ID uniformly (ensuring the sequence number is 4-digit padded, e.g., 2021-0005)
+        uid = f"{year_val}-{num_val:04d}"
+
+        # --- 2. FIRST & LAST NAME VALIDATION & AUTO-CASE ---
+        if not fn or not fn.isalpha():
+            QMessageBox.warning(self, "Validation Error", "First Name is required and must only contain English alphabet letters.")
             return
+        if not ln or not ln.isalpha():
+            QMessageBox.warning(self, "Validation Error", "Last Name is required and must only contain English alphabet letters.")
+            return
+            
+        # Auto uppercase the first letter and lowercase the rest (e.g. jOHN -> John)
+        fn = fn.capitalize()
+        ln = ln.capitalize()
+
+        # --- 3. MIDDLE INITIAL VALIDATION & AUTO-CASE ---
+        if mi:
+            # Clean off any trailing period the user might have manually typed to test the raw letter
+            mi_clean = mi.rstrip('.')
+            if len(mi_clean) != 1 or not mi_clean.isalpha():
+                QMessageBox.warning(self, "Validation Error", "Middle Initial must be a single English alphabet letter or left blank.")
+                return
+            # Automatically uppercase and attach a period next to it
+            mi = mi_clean.upper() + "."
+        else:
+            mi = ""
+
+        # --- 4. RFID ENROLLMENT CHECK ---
         if not self.rfid_uid:
             QMessageBox.warning(self, "RFID Scanning Needed", "Please tap the card scanner simulation workspace block to capture the RFID UID.")
             return
             
+        # --- 5. UNIQUE CHECKS & DATABASE OPERATIONS ---
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Check for existing student record
+            # STOPS INPUT IF ID IS NOT UNIQUE
             cursor.execute("SELECT user_id FROM USER WHERE user_id = ?", (uid,))
             if cursor.fetchone():
-                QMessageBox.warning(self, "Duplicate Student ID", f"The Student ID '{uid}' is already registered in the registry.")
+                QMessageBox.warning(self, "Duplicate Student ID", f"Registration Failed. The Student ID '{uid}' is already assigned to an existing user in the database.")
                 conn.close()
                 return
                 
-            # Check for existing RFID UID card duplication link
+            # STOPS INPUT IF RFID TAG IS NOT UNIQUE
             cursor.execute("SELECT user_id FROM USER WHERE rfid_uid = ?", (self.rfid_uid,))
             duplicate = cursor.fetchone()
             if duplicate:
-                QMessageBox.warning(self, "Duplicate RFID", f"The scanned RFID tag is already enrolled for Student ID: {duplicate[0]}. Please click the scanning box again to simulate another tag.")
+                QMessageBox.warning(self, "Duplicate RFID", f"The scanned RFID tag is already linked to Student ID: {duplicate[0]}. Please tap the reader workspace again to generate a unique scan.")
                 conn.close()
                 return
-                
+            
+            # If everything is unique and valid, append to database
             cursor.execute("""
                 INSERT INTO USER (user_id, first_name, last_name, m_i, rfid_uid)
                 VALUES (?, ?, ?, ?, ?)
