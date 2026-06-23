@@ -160,7 +160,6 @@ class UsersTab(QWidget):
         self.table.setColumnWidth(4, 110)  # Standing
         self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(5, 150)  # Actions
-        self.table.setMaximumHeight(None)  # Remove height constraint
         self.table.setMinimumHeight(400)  # Ensure minimum height for better visibility
         
         self.table.setStyleSheet("""
